@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #0f172a;
+            color: white;
+        }
+
+        .nav {
+            padding: 20px 40px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #111827;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .content {
+            padding: 60px 40px;
+        }
+
+        .card {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 700px;
+        }
+
+        .card h1 {
+            margin-top: 0;
+            font-size: 32px;
+        }
+
+        .card p {
+            color: #cbd5e1;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <div class="logo">SimpleTrade</div>
+        <div>{{ username }}</div>
+    </div>
+
+    <div class="content">
+        <div class="card">
+            <h1>Welcome, {{ username }}</h1>
+            <p>Your login system is working and styled. Next step is building the real market dashboard page.</p>
+        </div>
+    </div>
+</body>
+</html>
