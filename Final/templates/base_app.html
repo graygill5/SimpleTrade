@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}SimpleTrade{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="app-shell">
+    <header class="app-nav">
+        <div class="brand">SimpleTrade</div>
+        <div class="nav-meta">
+            <span class="pill">Market overview</span>
+            <span>Signed in as <strong>{{ username }}</strong></span>
+            <a class="logout" href="{{ url_for('logout') }}">Sign out</a>
+        </div>
+    </header>
+
+    <main class="main-area">
+        {% block content %}{% endblock %}
+    </main>
+
+    <button type="button" class="ai-fab" id="ai-fab" aria-label="Open AI assistant">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M12 3a6 6 0 0 0-6 6v3H4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2"/>
+            <path d="M12 3a6 6 0 0 1 6 6v3h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2"/>
+            <path d="M9 18v1a3 3 0 0 0 6 0v-1"/>
+        </svg>
+    </button>
+
+    <div class="ai-panel" id="ai-panel" role="dialog" aria-label="AI assistant">
+        <div class="ai-panel-hd">
+            <span>Assistant</span>
+            <button type="button" id="ai-close" aria-label="Close">×</button>
+        </div>
+        <p style="padding:0 16px 10px;font-size:0.72rem;color:#94a3b8;line-height:1.4;">
+            Educational help only — not financial advice. For app questions and general market concepts.
+        </p>
+        <div class="ai-msgs" id="ai-msgs"></div>
+        <div class="ai-input-row">
+            <input type="text" id="ai-input" placeholder="Ask something…" autocomplete="off" />
+            <button type="button" id="ai-send">Send</button>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/assistant.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,65 +1,238 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard</title>
-    <style>
-        body {
-            margin: 0;
-            font-family: Arial, Helvetica, sans-serif;
-            background: #0f172a;
-            color: white;
-        }
+{% extends "base_app.html" %}
+{% block title %}Market overview — SimpleTrade{% endblock %}
 
-        .nav {
-            padding: 20px 40px;
-            border-bottom: 1px solid rgba(255,255,255,0.08);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: #111827;
-        }
+{% block content %}
+{% if welcome %}
+<div class="toast-welcome show" id="welcome-toast" role="status">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    <span>You're signed in. Welcome, {{ username }}.</span>
+    <button type="button" onclick="dismissWelcome()" aria-label="Dismiss">×</button>
+</div>
+{% endif %}
 
-        .logo {
-            font-size: 24px;
-            font-weight: 700;
-        }
+<div class="page-head">
+    <h1>Market overview</h1>
+</div>
 
-        .content {
-            padding: 60px 40px;
-        }
-
-        .card {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 20px;
-            padding: 30px;
-            max-width: 700px;
-        }
-
-        .card h1 {
-            margin-top: 0;
-            font-size: 32px;
-        }
-
-        .card p {
-            color: #cbd5e1;
-            line-height: 1.6;
-        }
-    </style>
-</head>
-<body>
-    <div class="nav">
-        <div class="logo">SimpleTrade</div>
-        <div>{{ username }}</div>
-    </div>
-
-    <div class="content">
-        <div class="card">
-            <h1>Welcome, {{ username }}</h1>
-            <p>Your login system is working and styled. Next step is building the real market dashboard page.</p>
+<section class="panel" style="margin-bottom:16px;">
+    <div class="panel-hd">Major indexes</div>
+    <div class="tape">
+        {% for idx in indexes %}
+        <div class="idx-card">
+            <div class="nm">{{ idx.name }}</div>
+            <div class="px">{% if idx.price is not none %}{{ idx.price | fmt_price }}{% else %}—{% endif %}</div>
+            {% if idx.change_pct is not none %}
+            <div class="ch {% if idx.change_pct >= 0 %}up{% else %}down{% endif %}">
+                {% if idx.change_pct >= 0 %}+{% endif %}{{ "%.2f"|format(idx.change_pct) }}%
+            </div>
+            {% else %}
+            <div class="ch" style="color:#64748b;">—</div>
+            {% endif %}
         </div>
+        {% endfor %}
     </div>
-</body>
-</html>
+</section>
+
+<section class="panel" style="margin-bottom:16px;">
+    <div class="panel-hd">Your watchlist</div>
+    <div style="padding:12px 16px 16px;">
+        {% if watchlist %}
+        <table class="wl-table">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Name</th>
+                    <th class="rm">Last</th>
+                    <th class="rm">Change</th>
+                    <th class="rm">Volume</th>
+                    <th class="rm">Mkt cap</th>
+                    <th class="rm"></th>
+                </tr>
+            </thead>
+            <tbody id="wl-body">
+                {% for q in watchlist %}
+                <tr class="wl-row" data-symbol="{{ q.symbol }}">
+                    <td class="sym">{{ q.symbol }}</td>
+                    <td>{{ q.name }}</td>
+                    <td class="rm num">{% if q.price is not none %}{{ q.price | fmt_price }}{% else %}—{% endif %}</td>
+                    <td class="rm num {% if q.change_pct is not none and q.change_pct >= 0 %}up{% elif q.change_pct is not none %}down{% endif %}">
+                        {% if q.change_pct is not none %}{{ "%.2f"|format(q.change_pct) }}%{% else %}—{% endif %}
+                    </td>
+                    <td class="rm">{{ q.volume | fmt_vol }}</td>
+                    <td class="rm">{{ q.market_cap | fmt_cap }}</td>
+                    <td class="rm"><button type="button" class="link" data-remove-wl="{{ q.symbol }}">Remove</button></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty">No symbols yet. Use symbol lookup below and add tickers you want to track.</p>
+        {% endif %}
+    </div>
+</section>
+
+<div class="grid-top">
+    <section class="panel">
+        <div class="panel-hd">Top gainers <span style="opacity:.6;">(sample universe)</span></div>
+        <div class="panel-bd">
+            {% for r in gainers %}
+            <div class="row-line ticker-jump" role="button" tabindex="0" data-symbol="{{ r.symbol }}" title="Open {{ r.symbol }}">
+                <div>
+                    <span class="sym">{{ r.symbol }}</span>
+                    <span class="nm-sm">{{ r.name }}</span>
+                </div>
+                <span class="num">{% if r.price is not none %}{{ r.price | fmt_price }}{% else %}—{% endif %}</span>
+                <span class="num up">{% if r.change_pct is not none %}+{{ "%.2f"|format(r.change_pct) }}%{% else %}—{% endif %}</span>
+            </div>
+            {% else %}
+            <p class="empty">No data.</p>
+            {% endfor %}
+        </div>
+    </section>
+    <section class="panel">
+        <div class="panel-hd">Top losers <span style="opacity:.6;">(sample universe)</span></div>
+        <div class="panel-bd">
+            {% for r in losers %}
+            <div class="row-line ticker-jump" role="button" tabindex="0" data-symbol="{{ r.symbol }}" title="Open {{ r.symbol }}">
+                <div>
+                    <span class="sym">{{ r.symbol }}</span>
+                    <span class="nm-sm">{{ r.name }}</span>
+                </div>
+                <span class="num">{% if r.price is not none %}{{ r.price | fmt_price }}{% else %}—{% endif %}</span>
+                <span class="num down">{% if r.change_pct is not none %}{{ "%.2f"|format(r.change_pct) }}%{% else %}—{% endif %}</span>
+            </div>
+            {% else %}
+            <p class="empty">No data.</p>
+            {% endfor %}
+        </div>
+    </section>
+    <section class="panel">
+        <div class="panel-hd">Trending by volume</div>
+        <div class="panel-bd">
+            {% for r in trending %}
+            <div class="row-line ticker-jump" role="button" tabindex="0" data-symbol="{{ r.symbol }}" title="Open {{ r.symbol }}">
+                <div>
+                    <span class="sym">{{ r.symbol }}</span>
+                    <span class="nm-sm">{{ r.name }}</span>
+                </div>
+                <span class="num">{{ r.volume | fmt_vol }}</span>
+                <span class="num {% if r.change_pct is not none and r.change_pct >= 0 %}up{% elif r.change_pct is not none %}down{% endif %}">
+                    {% if r.change_pct is not none %}{{ "%.2f"|format(r.change_pct) }}%{% else %}—{% endif %}
+                </span>
+            </div>
+            {% else %}
+            <p class="empty">No data.</p>
+            {% endfor %}
+        </div>
+    </section>
+</div>
+
+<div class="grid-mid">
+    <section class="panel search-panel">
+        <div class="panel-hd">Symbol lookup</div>
+        <div style="padding:12px 16px 16px;">
+            <div class="search-row" style="position:relative;">
+                <input type="text" id="symbol-search" placeholder="Search ticker (e.g. AAPL, MSFT, ^GSPC)" autocomplete="off" />
+                <div class="search-dd" id="search-results"></div>
+            </div>
+            <div class="stock-card" id="stock-detail">
+                <h3 id="stock-title">—</h3>
+                <p class="meta" id="stock-meta">Select a symbol to load a quote.</p>
+                <div class="metrics">
+                    <div class="metric"><div class="k">Last</div><div class="v" id="m-price">—</div></div>
+                    <div class="metric"><div class="k">Change</div><div class="v num" id="m-chg">—</div></div>
+                    <div class="metric"><div class="k">Volume</div><div class="v" id="m-vol">—</div></div>
+                    <div class="metric"><div class="k">Market cap</div><div class="v" id="m-cap">—</div></div>
+                </div>
+                <div class="chart-section" id="chart-section" hidden>
+                    <div class="chart-hd">Price history <span class="chart-sub">Yahoo — delayed</span></div>
+                    <div class="chart-tabs" id="chart-tabs">
+                        <button type="button" class="chart-tab" data-range="1d">1D</button>
+                        <button type="button" class="chart-tab" data-range="1w">1W</button>
+                        <button type="button" class="chart-tab active" data-range="1m">1M</button>
+                        <button type="button" class="chart-tab" data-range="1y">1Y</button>
+                        <button type="button" class="chart-tab" data-range="5y">5Y</button>
+                        <button type="button" class="chart-tab" data-range="10y">10Y</button>
+                    </div>
+                    <div class="chart-canvas-wrap">
+                        <canvas id="price-chart"></canvas>
+                    </div>
+                    <p class="chart-empty" id="chart-empty" hidden></p>
+                </div>
+                <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+                    <button type="button" class="btn btn-primary" id="btn-add-wl" disabled>Add to watchlist</button>
+                </div>
+                <div class="ticker-ai-wrap" id="ticker-ai-wrap" hidden>
+                    <div class="ticker-ai-hd">AI overview &amp; recent news</div>
+                    <p class="ticker-ai-disclaimer">Educational only — not advice. Based on Yahoo data and headlines (may be delayed).</p>
+                    <div class="ai-out ticker-ai-out" id="ticker-ai-out">—</div>
+                    <div class="ticker-news-mini" id="ticker-news-list"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-hd">Market headlines</div>
+        <div class="news-list">
+            {% for n in news %}
+            <div class="news-item">
+                {% if n.link %}
+                <a href="{{ n.link }}" target="_blank" rel="noopener noreferrer">{{ n.title }}</a>
+                {% else %}
+                <span>{{ n.title }}</span>
+                {% endif %}
+                {% if n.publisher %}
+                <div class="pub">{{ n.publisher }}</div>
+                {% endif %}
+            </div>
+            {% else %}
+            <p class="empty">No headlines available.</p>
+            {% endfor %}
+        </div>
+    </section>
+</div>
+
+<div class="ai-grid">
+    <section class="panel ai-box">
+        <div class="panel-hd">AI market summary</div>
+        <div style="padding:12px 16px 16px;">
+            <div class="ai-actions">
+                <button type="button" class="btn btn-primary" id="ai-summary-btn" {% if not ai_ready %}disabled title="Set OPENAI_API_KEY"{% endif %}>Generate summary</button>
+            </div>
+            <div class="ai-out" id="ai-summary-out">{% if ai_ready %}Click generate for a concise digest based on the snapshot above.{% else %}Add <code style="color:#94a3b8;">OPENAI_API_KEY</code> to your environment to enable AI features.{% endif %}</div>
+        </div>
+    </section>
+    <section class="panel ai-box">
+        <div class="panel-hd">Educational outlook</div>
+        <div style="padding:12px 16px 16px;">
+            <div class="ai-actions">
+                <button type="button" class="btn btn-primary" id="ai-outlook-btn" {% if not ai_ready %}disabled title="Set OPENAI_API_KEY"{% endif %}>Generate outlook</button>
+            </div>
+            <div class="ai-out" id="ai-outlook-out">{% if ai_ready %}Balanced discussion of drivers and risks — not a forecast.{% else %}Configure OpenAI to enable.{% endif %}</div>
+            <p class="disclaimer">
+                <strong>Disclaimer:</strong> AI text is educational commentary only. It is not investment advice, not a recommendation, and not a prediction of future prices or returns. Markets are risky; consult a qualified professional for personal financial decisions.
+            </p>
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% if welcome %}
+<script>
+function dismissWelcome() {
+    var t = document.getElementById("welcome-toast");
+    if (t) { t.classList.remove("show"); t.style.display = "none"; }
+    if (history.replaceState) {
+        var u = new URL(window.location.href);
+        u.searchParams.delete("welcome");
+        history.replaceState({}, "", u.pathname + (u.search || ""));
+    }
+}
+setTimeout(dismissWelcome, 9000);
+</script>
+{% endif %}
+{% endblock %}
