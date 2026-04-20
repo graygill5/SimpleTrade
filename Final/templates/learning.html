@@ -1,24 +1,75 @@
 {% extends "base_app.html" %}
 {% block title %}Learning modules — SimpleTrade{% endblock %}
-{% block nav_pill %}Learning modules{% endblock %}
+{% block nav_pill %}Learning{% endblock %}
 
 {% block content %}
 <div class="page-head">
-    <h1>Learning modules</h1>
+    <div>
+        <h1>Learning modules</h1>
+        <p class="sub learn-tagline">Earn paper-trading cash each calendar day — <strong>${{ '%.0f'|format(learning_reward_usd|float) }}</strong> per module,
+            <strong>${{ '%.0f'|format(learning_bonus_usd|float) }}</strong> bonus when you finish all {{ learning_module_count }} in one day.</p>
+    </div>
     {% set active = 'learning' %}
     {% include '_app_section_nav.html' %}
 </div>
 
-<section class="panel">
-    <div class="panel-hd">Courses &amp; lessons</div>
-    <div style="padding:12px 16px 16px;">
-        <p class="empty">Lesson content and quizzes will live here. When a module is completed, the app can credit your <strong>paper trading</strong> account once per module (on top of the $10,000 starting balance).</p>
-        <p style="margin-top:12px;font-size:0.85rem;color:#94a3b8;line-height:1.45;">
-            Reward modules (server-defined): <code style="color:#94a3b8;">intro_markets</code>,
-            <code style="color:#94a3b8;">risk_and_diversification</code>,
-            <code style="color:#94a3b8;">orders_and_spreads</code> — claim via
-            <code style="color:#94a3b8;">POST /api/paper/claim_module</code> with JSON <code style="color:#94a3b8;">{"module_id":"…"}</code> after the user passes the lesson.
-        </p>
+<div
+    id="learn-app"
+    class="learn-app"
+    data-ai-ready="{{ '1' if ai_learning_ready else '0' }}"
+>
+    <section class="panel learn-hero-panel">
+        <div class="learn-hero-inner">
+            <div class="learn-stat">
+                <span class="learn-stat-label">Server date</span>
+                <span class="learn-stat-val" id="learn-calendar-date">—</span>
+            </div>
+            <div class="learn-stat learn-stat-wide">
+                <span class="learn-stat-label">Today&apos;s progress</span>
+                <div class="learn-progress-row">
+                    <div class="learn-progress-track" aria-hidden="true">
+                        <div class="learn-progress-fill" id="learn-progress-fill" style="width:0%"></div>
+                    </div>
+                    <span id="learn-progress-text" class="learn-progress-text">0 / {{ learning_module_count }}</span>
+                </div>
+            </div>
+            <div class="learn-stat">
+                <span class="learn-stat-label">Daily bonus</span>
+                <span class="learn-stat-val" id="learn-bonus-status">—</span>
+            </div>
+        </div>
+        <p class="learn-disclaimer">Educational content only — not investment advice. Quizzes require every answer correct to earn today&apos;s reward.</p>
+    </section>
+
+    <div class="learn-grid" id="learn-module-grid"></div>
+</div>
+
+<div class="learn-modal-backdrop" id="learn-modal" hidden>
+    <div class="learn-modal" role="dialog" aria-modal="true" aria-labelledby="learn-modal-title">
+        <div class="learn-modal-top">
+            <h2 id="learn-modal-title" class="learn-modal-title">Module</h2>
+            <button type="button" class="learn-modal-close" id="learn-modal-close" aria-label="Close">×</button>
+        </div>
+        <p id="learn-modal-tagline" class="learn-modal-tagline"></p>
+
+        <div id="learn-lesson-body" class="learn-lesson-body"></div>
+
+        <div class="learn-ai-panel" id="learn-ai-panel" hidden>
+            <button type="button" class="btn learn-ai-btn" id="learn-ai-btn">✨ AI recap (optional)</button>
+            <p class="learn-ai-hint">Uses OpenAI when configured — supplements the lesson, doesn&apos;t replace it.</p>
+            <div id="learn-ai-output" class="learn-ai-output" hidden></div>
+        </div>
+
+        <form id="learn-quiz-form" class="learn-quiz-form">
+            <div class="learn-quiz-hd">Quiz — all correct to complete</div>
+            <div id="learn-quiz-fields"></div>
+            <button type="submit" class="btn btn-primary learn-submit-btn" id="learn-submit-quiz">Submit answers</button>
+        </form>
+        <p id="learn-quiz-feedback" class="learn-quiz-feedback" role="status" aria-live="polite" hidden></p>
     </div>
-</section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/learning.js') }}"></script>
 {% endblock %}

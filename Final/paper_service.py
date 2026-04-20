@@ -15,14 +15,6 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")
 STARTING_CASH = 10_000.0
 SYMBOL_RE = re.compile(r"^[A-Z0-9\^\-\.]{1,24}$")
 
-# One-time rewards when a module is marked complete (Learning page will call claim).
-MODULE_REWARDS: dict[str, float] = {
-    "intro_markets": 500.0,
-    "risk_and_diversification": 750.0,
-    "orders_and_spreads": 500.0,
-}
-
-
 def _money(x: Any) -> float:
     return round(float(x), 2)
 
@@ -438,56 +430,12 @@ def credit_reward(username: str, amount: float, note: str) -> tuple[bool, str]:
 
 
 def claim_module_reward(username: str, module_id: str) -> tuple[bool, str]:
-    mid = (module_id or "").strip()
-    if mid not in MODULE_REWARDS:
-        return False, "Unknown module."
-    amt = _money(MODULE_REWARDS[mid])
-    ensure_paper_account(username)
-    db = connect()
-    cur = db.cursor()
-    cur.execute("BEGIN IMMEDIATE")
-    try:
-        cur.execute(
-            "SELECT 1 FROM learning_completions WHERE username=? AND module_id=?",
-            (username, mid),
-        )
-        if cur.fetchone():
-            db.rollback()
-            db.close()
-            return False, "Reward already claimed for this module."
-        cur.execute("SELECT cash FROM paper_accounts WHERE username=?", (username,))
-        row = cur.fetchone()
-        if not row:
-            db.rollback()
-            db.close()
-            return False, "No paper account."
-        cash = _money(float(row[0]))
-        new_cash = _money(cash + amt)
-        cur.execute(
-            "UPDATE paper_accounts SET cash=? WHERE username=?",
-            (new_cash, username),
-        )
-        cur.execute(
-            """
-            INSERT INTO paper_transactions
-            (username, kind, symbol, shares, price, amount, cash_after, note)
-            VALUES (?, 'reward', NULL, NULL, NULL, ?, ?, ?)
-            """,
-            (username, amt, new_cash, f"Learning module: {mid}"),
-        )
-        cur.execute(
-            "INSERT INTO learning_completions (username, module_id) VALUES (?, ?)",
-            (username, mid),
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        db.close()
-        return False, "Could not apply reward."
-    db.close()
-    st = get_portfolio_state(username)
-    record_snapshot(username, st)
-    return True, f"Added ${amt:,.2f} to your paper account."
+    """Legacy endpoint — rewards are granted via Learning page quizzes (daily reset)."""
+    _ = module_id
+    return (
+        False,
+        "Complete modules on the Learning page: pass today's quiz to earn paper cash.",
+    )
 
 
 def list_transactions(username: str, limit: int = 100) -> list[dict[str, Any]]:

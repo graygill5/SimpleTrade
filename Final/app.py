@@ -18,6 +18,7 @@ from flask import (
 import sqlite3
 
 import ai_service
+import learning_service
 import market_service
 import paper_service
 import social_service
@@ -114,6 +115,25 @@ def init_db():
             module_id TEXT NOT NULL,
             completed_at TEXT DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (username, module_id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS learning_daily_completions (
+            username TEXT NOT NULL,
+            module_id TEXT NOT NULL,
+            completion_date TEXT NOT NULL,
+            PRIMARY KEY (username, module_id, completion_date)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_learning_daily_user_date
+        ON learning_daily_completions(username, completion_date)
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS learning_daily_bonus (
+            username TEXT NOT NULL,
+            bonus_date TEXT NOT NULL,
+            PRIMARY KEY (username, bonus_date)
         )
     """)
 
@@ -540,7 +560,67 @@ def learning_modules():
     user = current_user()
     if not user:
         return redirect("/?message=" + quote("Please sign in to open Learning modules."))
-    return render_template("learning.html", username=user)
+    return render_template(
+        "learning.html",
+        username=user,
+        ai_learning_ready=ai_service.is_configured(),
+        learning_bonus_usd=learning_service.DAILY_ALL_BONUS,
+        learning_reward_usd=learning_service.REWARD_PER_MODULE,
+        learning_module_count=learning_service.MODULE_COUNT,
+    )
+
+
+@app.route("/api/learning/state", methods=["GET"])
+@login_required_json
+def api_learning_state():
+    me = current_user()
+    assert me
+    return jsonify(learning_service.get_state(me))
+
+
+@app.route("/api/learning/module/<path:module_id>", methods=["GET"])
+@login_required_json
+def api_learning_module_detail(module_id: str):
+    m = learning_service.get_module_for_client(module_id)
+    if not m:
+        return jsonify({"error": "Unknown module"}), 404
+    return jsonify({"module": m})
+
+
+@app.route("/api/learning/quiz", methods=["POST"])
+@login_required_json
+def api_learning_quiz_submit():
+    me = current_user()
+    assert me
+    body = request.get_json(silent=True) or {}
+    mid = (body.get("module_id") or "").strip()
+    answers = body.get("answers")
+    if not isinstance(answers, list):
+        return jsonify({"error": "answers must be a list of choice indices"}), 400
+    ok, msg, payload = learning_service.submit_quiz(me, mid, answers)
+    if not ok:
+        return jsonify({"error": msg}), 400
+    pf = paper_service.get_portfolio_state(me)
+    out = dict(payload)
+    out["message"] = msg
+    out["portfolio"] = pf
+    return jsonify(out)
+
+
+@app.route("/api/learning/ai_summary", methods=["POST"])
+@login_required_json
+def api_learning_ai_summary():
+    body = request.get_json(silent=True) or {}
+    mid = (body.get("module_id") or "").strip()
+    outline = learning_service.ai_outline_for_module(mid)
+    if not outline:
+        return jsonify({"error": "Unknown module"}), 404
+    m = learning_service.get_module_for_client(mid)
+    title = (m.get("title") if m else "") or mid
+    text, err = ai_service.generate_learning_summary(title, outline)
+    if err:
+        return jsonify({"error": err}), 502
+    return jsonify({"summary": text or ""})
 
 
 # -------- API: SEARCH & QUOTE --------
@@ -771,7 +851,11 @@ def api_paper_state():
             "snapshots": snaps,
             "read_only": False,
             "owner": me,
-            "module_rewards": paper_service.MODULE_REWARDS,
+            "learning_rewards": {
+                "per_module_usd": learning_service.REWARD_PER_MODULE,
+                "daily_all_bonus_usd": learning_service.DAILY_ALL_BONUS,
+                "module_count": learning_service.MODULE_COUNT,
+            },
         }
     )
 
@@ -794,7 +878,7 @@ def api_paper_state_user(username):
             "snapshots": snaps,
             "read_only": me != target,
             "owner": target,
-            "module_rewards": paper_service.MODULE_REWARDS if me == target else {},
+            "learning_rewards": {},
         }
     )
 

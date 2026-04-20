@@ -115,6 +115,37 @@ def generate_educational_outlook(context_text: str) -> tuple[str | None, str | N
         return None, str(e)
 
 
+_SYSTEM_LEARNING = (
+    "You are a concise finance tutor for a paper-trading learning app. "
+    + _EDU_DISCLAIMER
+    + " Produce a tight summary (max 220 words): short paragraphs or bullets, plain English."
+)
+
+
+def generate_learning_summary(module_title: str, outline: str) -> tuple[str | None, str | None]:
+    """Extra lesson recap from structured outline (does not replace required reading)."""
+    c = _client()
+    if not c:
+        return None, "OpenAI is not configured. Set OPENAI_API_KEY in your environment."
+    try:
+        r = c.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": _SYSTEM_LEARNING},
+                {
+                    "role": "user",
+                    "content": f"Module: {module_title}\n\nCore material to summarize:\n{outline[:12000]}",
+                },
+            ],
+            temperature=0.35,
+            max_tokens=550,
+        )
+        text = (r.choices[0].message.content or "").strip()
+        return text, None
+    except Exception as e:
+        return None, str(e)
+
+
 def generate_ticker_overview(context_text: str) -> tuple[str | None, str | None]:
     """Educational overview for a single symbol from Yahoo snapshot + headlines."""
     c = _client()
