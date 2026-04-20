@@ -1,14 +1,16 @@
 """
 Yahoo Finance helpers via yfinance. Best-effort; failures return empty structures.
 
-Bulk yf.download() for many tickers triggers YFRateLimitError; we use sequential
-Ticker.history() with small delays and long cache TTL for the movers universe.
+We fetch in parallel batches (ThreadPoolExecutor) to avoid wall-clock time from
+dozens of sequential history() calls. Long TTL caches limit repeat Yahoo load.
+Optional: SIMPLETRADE_MOVERS_MAX caps movers universe size (e.g. 30) for faster cold loads.
 """
 from __future__ import annotations
 
 import logging
-import random
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
@@ -36,18 +38,28 @@ MOVERS_UNIVERSE = [
     "SPY", "QQQ", "IWM", "DIA", "XLF", "XLE", "XLK",
 ]
 
+
+def _movers_symbols() -> list[str]:
+    """Full movers list, or first N symbols if SIMPLETRADE_MOVERS_MAX is set (min 10)."""
+    raw = os.environ.get("SIMPLETRADE_MOVERS_MAX", "").strip()
+    if raw.isdigit():
+        n = max(10, min(int(raw), len(MOVERS_UNIVERSE)))
+        return MOVERS_UNIVERSE[:n]
+    return MOVERS_UNIVERSE
+
+
 _CACHE: dict[str, tuple[float, Any, float]] = {}
 # Default cache for news, single-ticker fetches
 _TTL_DEFAULT = 120.0
-# Index tape: sequential Yahoo calls; cache longer to avoid repeat bursts
+# Index tape: parallel Yahoo calls; cache longer to avoid repeat bursts
 _TTL_INDEX = 300.0
-_INDEX_FETCH_DELAY = 0.22
 # marketCap from ticker.info (cached; fast_info often omits market_cap)
 _TTL_MCAP_INFO = 3600.0
 # Movers universe does many Yahoo calls; keep results longer to avoid rate limits
 _TTL_MOVERS = 600.0
-# Pause between sequential history calls (bulk download hammers Yahoo)
-_MOVER_FETCH_DELAY = 0.2
+# Parallel batch size for movers (history per symbol); brief pause between batches
+_MOVERS_BATCH = 8
+_BATCH_PAUSE = 0.12
 
 
 def _cache_get(key: str) -> Any | None:
@@ -145,7 +157,7 @@ def _index_row_from_history(sym: str, labels: dict[str, str]) -> dict[str, Any]:
 
 
 def fetch_indexes() -> list[dict[str, Any]]:
-    """One history() call per index with pacing — bulk yf.download() hits YFRateLimitError."""
+    """Parallel history() per index; order matches INDEX_SYMBOLS."""
     ck = "indexes"
     hit = _cache_get(ck)
     if hit is not None:
@@ -160,11 +172,26 @@ def fetch_indexes() -> list[dict[str, Any]]:
         "^NYA": "NYSE Comp",
         "^VIX": "VIX",
     }
-    out: list[dict[str, Any]] = []
-    for i, sym in enumerate(INDEX_SYMBOLS):
-        if i > 0:
-            time.sleep(_INDEX_FETCH_DELAY + random.uniform(0, 0.06))
-        out.append(_index_row_from_history(sym, labels))
+
+    def one(sym: str) -> dict[str, Any]:
+        return _index_row_from_history(sym, labels)
+
+    out_map: dict[str, dict[str, Any]] = {}
+    n_workers = min(10, len(INDEX_SYMBOLS))
+    with ThreadPoolExecutor(max_workers=n_workers) as ex:
+        futs = {ex.submit(one, sym): sym for sym in INDEX_SYMBOLS}
+        for fut in as_completed(futs):
+            sym = futs[fut]
+            try:
+                out_map[sym] = fut.result()
+            except Exception:
+                out_map[sym] = {
+                    "symbol": sym,
+                    "name": labels.get(sym, sym),
+                    "price": None,
+                    "change_pct": None,
+                }
+    out = [out_map[s] for s in INDEX_SYMBOLS]
 
     _cache_set(ck, out, ttl=_TTL_INDEX)
     return out
@@ -201,14 +228,19 @@ def _row_from_ticker_history(sym: str) -> dict[str, Any] | None:
 
 
 def _rows_from_history(symbols: list[str]) -> list[dict[str, Any]]:
-    """Sequential history pulls with pacing — bulk yf.download() triggers YFRateLimitError."""
+    """Parallel history pulls in batches with a short pause between batches."""
+    if not symbols:
+        return []
     rows: list[dict[str, Any]] = []
-    for i, sym in enumerate(symbols):
-        if i > 0:
-            time.sleep(_MOVER_FETCH_DELAY + random.uniform(0, 0.06))
-        row = _row_from_ticker_history(sym)
-        if row:
-            rows.append(row)
+    batch = _MOVERS_BATCH
+    for i in range(0, len(symbols), batch):
+        chunk = symbols[i : i + batch]
+        with ThreadPoolExecutor(max_workers=min(batch, len(chunk))) as ex:
+            for row in ex.map(_row_from_ticker_history, chunk):
+                if row:
+                    rows.append(row)
+        if i + batch < len(symbols):
+            time.sleep(_BATCH_PAUSE)
     return rows
 
 
@@ -217,7 +249,7 @@ def _mover_universe_rows() -> list[dict[str, Any]]:
     hit = _cache_get(ck)
     if hit is not None:
         return hit
-    rows = _rows_from_history(MOVERS_UNIVERSE)
+    rows = _rows_from_history(_movers_symbols())
     _cache_set(ck, rows, ttl=_TTL_MOVERS)
     return rows
 
@@ -330,6 +362,15 @@ def _normalize_market_news_item(
     }
 
 
+def _raw_news_for_symbol(sym: str) -> list[dict[str, Any]]:
+    try:
+        t = yf.Ticker(sym)
+        items = getattr(t, "news", None) or []
+        return [n for n in items if isinstance(n, dict)]
+    except Exception:
+        return []
+
+
 def fetch_market_news(limit: int = 18) -> list[dict[str, Any]]:
     """Merged Yahoo Finance headlines from broad market tickers (cached)."""
     lim = max(1, min(int(limit), 50))
@@ -339,27 +380,24 @@ def fetch_market_news(limit: int = 18) -> list[dict[str, Any]]:
     if hit is not None:
         return hit
 
+    news_sources = ("SPY", "QQQ", "^GSPC")
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        per_sym = list(ex.map(_raw_news_for_symbol, news_sources))
+
     seen: set[str] = set()
     merged: list[dict[str, Any]] = []
-    for sym in ("SPY", "QQQ", "^GSPC"):
-        try:
-            t = yf.Ticker(sym)
-            items = getattr(t, "news", None) or []
-            for n in items:
-                if not isinstance(n, dict):
-                    continue
-                flat = _flatten_yahoo_news_item(n)
-                if not flat:
-                    continue
-                title = (flat.get("title") or "").strip()
-                if not title or title in seen:
-                    continue
-                seen.add(title)
-                merged.append(_normalize_market_news_item(flat, source=sym))
-                if len(merged) >= lim:
-                    break
-        except Exception:
-            continue
+    for sym, items in zip(news_sources, per_sym):
+        for n in items:
+            flat = _flatten_yahoo_news_item(n)
+            if not flat:
+                continue
+            title = (flat.get("title") or "").strip()
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            merged.append(_normalize_market_news_item(flat, source=sym))
+            if len(merged) >= lim:
+                break
         if len(merged) >= lim:
             break
 
@@ -543,12 +581,21 @@ def fetch_chart_series(symbol: str, range_key: str) -> dict[str, Any] | None:
 
 
 def fetch_quotes_for_symbols(symbols: list[str]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
+    if not symbols:
+        return []
+    uniq: list[str] = []
+    seen: set[str] = set()
     for s in symbols:
-        q = fetch_quote(s)
-        if q:
-            out.append(q)
-    return out
+        u = (s or "").strip().upper()
+        if u and u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    if not uniq:
+        return []
+    n_workers = min(8, len(uniq))
+    with ThreadPoolExecutor(max_workers=n_workers) as ex:
+        quotes = list(ex.map(fetch_quote, uniq))
+    return [q for q in quotes if q]
 
 
 def fetch_ticker_news(symbol: str, limit: int = 14) -> list[dict[str, Any]]:

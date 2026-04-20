@@ -1,0 +1,18 @@
+{% extends "base_app.html" %}
+{% block title %}Portfolio — SimpleTrade{% endblock %}
+{% block nav_pill %}Portfolio{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <h1>Portfolio</h1>
+    {% set active = 'portfolio' %}
+    {% include '_app_section_nav.html' %}
+</div>
+
+<section class="panel">
+    <div class="panel-hd">Your holdings</div>
+    <div style="padding:12px 16px 16px;">
+        <p class="empty">This page is a placeholder. You can add positions, performance, and allocation here in a future update.</p>
+    </div>
+</section>
+{% endblock %}

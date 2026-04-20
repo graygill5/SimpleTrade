@@ -400,7 +400,10 @@
 
     document.querySelectorAll(".wl-row").forEach(function (tr) {
         tr.addEventListener("click", function (e) {
-            if (e.target.closest("button[data-remove-wl]")) return;
+            var el = e.target;
+            if (el && el.nodeType !== 1) el = el.parentElement;
+            if (el && typeof el.closest === "function" && el.closest("button[data-remove-wl]"))
+                return;
             var s = tr.getAttribute("data-symbol");
             if (s) openSymbol(s);
         });

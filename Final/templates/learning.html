@@ -1,0 +1,18 @@
+{% extends "base_app.html" %}
+{% block title %}Learning modules — SimpleTrade{% endblock %}
+{% block nav_pill %}Learning modules{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <h1>Learning modules</h1>
+    {% set active = 'learning' %}
+    {% include '_app_section_nav.html' %}
+</div>
+
+<section class="panel">
+    <div class="panel-hd">Courses &amp; lessons</div>
+    <div style="padding:12px 16px 16px;">
+        <p class="empty">This page is a placeholder. You can add lessons, progress, and quizzes here in a future update.</p>
+    </div>
+</section>
+{% endblock %}

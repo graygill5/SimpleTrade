@@ -315,6 +315,30 @@ def dashboard():
     )
 
 
+@app.route("/portfolio")
+def portfolio():
+    user = current_user()
+    if not user:
+        return redirect("/?message=" + quote("Please sign in to open Portfolio."))
+    return render_template("portfolio.html", username=user)
+
+
+@app.route("/chats")
+def chats():
+    user = current_user()
+    if not user:
+        return redirect("/?message=" + quote("Please sign in to open Chats."))
+    return render_template("chats.html", username=user)
+
+
+@app.route("/learning")
+def learning_modules():
+    user = current_user()
+    if not user:
+        return redirect("/?message=" + quote("Please sign in to open Learning modules."))
+    return render_template("learning.html", username=user)
+
+
 # -------- API: SEARCH & QUOTE --------
 @app.route("/api/search")
 @login_required_json

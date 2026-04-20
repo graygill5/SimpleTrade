@@ -1,0 +1,6 @@
+<nav class="app-section-nav" aria-label="App sections">
+    <a class="btn btn-nav" href="{{ url_for('dashboard') }}"{% if active == 'overview' %} aria-current="page"{% endif %}>Market overview</a>
+    <a class="btn btn-nav" href="{{ url_for('portfolio') }}"{% if active == 'portfolio' %} aria-current="page"{% endif %}>Portfolio</a>
+    <a class="btn btn-nav" href="{{ url_for('chats') }}"{% if active == 'chats' %} aria-current="page"{% endif %}>Chats</a>
+    <a class="btn btn-nav" href="{{ url_for('learning_modules') }}"{% if active == 'learning' %} aria-current="page"{% endif %}>Learning modules</a>
+</nav>

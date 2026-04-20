@@ -14,7 +14,7 @@
     <header class="app-nav">
         <div class="brand">SimpleTrade</div>
         <div class="nav-meta">
-            <span class="pill">Market overview</span>
+            <span class="pill">{% block nav_pill %}Market overview{% endblock %}</span>
             <span>Signed in as <strong>{{ username }}</strong></span>
             <a class="logout" href="{{ url_for('logout') }}">Sign out</a>
         </div>

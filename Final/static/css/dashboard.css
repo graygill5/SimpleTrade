@@ -78,7 +78,7 @@
 .page-head {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 12px;
     margin-bottom: 22px;
@@ -93,6 +93,24 @@
 .page-head .sub {
     color: var(--muted);
     font-size: 0.88rem;
+}
+
+.app-section-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+a.btn.btn-nav {
+    text-decoration: none;
+    color: var(--text);
+}
+
+a.btn.btn-nav[aria-current="page"] {
+    opacity: 0.55;
+    pointer-events: none;
+    cursor: default;
 }
 
 .tag-row {

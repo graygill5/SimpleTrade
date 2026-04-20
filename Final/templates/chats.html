@@ -1,0 +1,18 @@
+{% extends "base_app.html" %}
+{% block title %}Chats — SimpleTrade{% endblock %}
+{% block nav_pill %}Chats{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <h1>Chats</h1>
+    {% set active = 'chats' %}
+    {% include '_app_section_nav.html' %}
+</div>
+
+<section class="panel">
+    <div class="panel-hd">Conversations</div>
+    <div style="padding:12px 16px 16px;">
+        <p class="empty">This page is a placeholder. You can add threads, history, and messaging here in a future update.</p>
+    </div>
+</section>
+{% endblock %}
