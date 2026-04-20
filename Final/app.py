@@ -481,15 +481,37 @@ def dashboard():
     # Parallelize independent Yahoo pulls only. fetch_movers + fetch_trending_by_volume share one
     # underlying universe (_mover_universe_rows); running those in parallel doubles Yahoo load and
     # races the cache → empty movers/trending and rate limits.
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        fut_ix = pool.submit(market_service.fetch_indexes)
-        fut_news = pool.submit(market_service.fetch_market_news, 16)
-        fut_wl = pool.submit(market_service.fetch_quotes_for_symbols, wl_syms)
-        indexes = fut_ix.result()
-        news = fut_news.result()
-        watchlist = fut_wl.result()
-    gainers, losers = market_service.fetch_movers()
-    trending = market_service.fetch_trending_by_volume()
+    indexes: list = []
+    news: list = []
+    watchlist: list = []
+    try:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            fut_ix = pool.submit(market_service.fetch_indexes)
+            fut_news = pool.submit(market_service.fetch_market_news, 16)
+            fut_wl = pool.submit(market_service.fetch_quotes_for_symbols, wl_syms)
+            try:
+                indexes = fut_ix.result()
+            except Exception:
+                indexes = []
+            try:
+                news = fut_news.result()
+            except Exception:
+                news = []
+            try:
+                watchlist = fut_wl.result()
+            except Exception:
+                watchlist = []
+    except Exception:
+        indexes, news, watchlist = [], [], []
+
+    try:
+        gainers, losers = market_service.fetch_movers()
+    except Exception:
+        gainers, losers = [], []
+    try:
+        trending = market_service.fetch_trending_by_volume()
+    except Exception:
+        trending = []
 
     return render_template(
         "dashboard.html",

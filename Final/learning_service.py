@@ -794,6 +794,7 @@ def submit_quiz(
 
     st0 = ps.get_portfolio_state(username)
     ps.record_snapshot(username, st0)
+    ps.invalidate_leaderboard_cache()
 
     bonus_extra = _grant_bonus_if_eligible(username, d)
     st = get_state(username)

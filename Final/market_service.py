@@ -587,7 +587,10 @@ def fetch_chart_series(symbol: str, range_key: str) -> dict[str, Any] | None:
     return out
 
 
-def fetch_quotes_for_symbols(symbols: list[str]) -> list[dict[str, Any]]:
+def fetch_quotes_for_symbols(
+    symbols: list[str], *, with_mcap: bool = True
+) -> list[dict[str, Any]]:
+    """Parallel quotes; failures on individual symbols never crash the whole batch."""
     if not symbols:
         return []
     uniq: list[str] = []
@@ -599,10 +602,26 @@ def fetch_quotes_for_symbols(symbols: list[str]) -> list[dict[str, Any]]:
             uniq.append(u)
     if not uniq:
         return []
-    n_workers = min(8, len(uniq))
+
+    def _safe_quote(sym: str) -> dict[str, Any] | None:
+        try:
+            return fetch_quote(sym, with_mcap=with_mcap)
+        except Exception:
+            return None
+
+    # Cap workers so we don't hammer Yahoo with 8+ simultaneous sessions during outages.
+    n_workers = max(1, min(4, len(uniq)))
+    out: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=n_workers) as ex:
-        quotes = list(ex.map(fetch_quote, uniq))
-    return [q for q in quotes if q]
+        futs = [ex.submit(_safe_quote, s) for s in uniq]
+        for fut in as_completed(futs):
+            try:
+                q = fut.result()
+                if q:
+                    out.append(q)
+            except Exception:
+                continue
+    return out
 
 
 def fetch_ticker_news(symbol: str, limit: int = 14) -> list[dict[str, Any]]:

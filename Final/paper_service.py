@@ -6,11 +6,24 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import time
 from typing import Any
 
 import market_service
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")
+
+# Leaderboard recomputes Yahoo quotes for every distinct holding symbol — cache full rank list briefly.
+_LEADERBOARD_CACHE_TS: float = 0.0
+_LEADERBOARD_CACHE_ROWS: list[dict[str, Any]] = []
+_LEADERBOARD_TTL_SEC = 75.0
+
+
+def invalidate_leaderboard_cache() -> None:
+    """Call after trades/rewards so the next leaderboard request recomputes."""
+    global _LEADERBOARD_CACHE_TS, _LEADERBOARD_CACHE_ROWS
+    _LEADERBOARD_CACHE_TS = 0.0
+    _LEADERBOARD_CACHE_ROWS = []
 
 STARTING_CASH = 10_000.0
 SYMBOL_RE = re.compile(r"^[A-Z0-9\^\-\.]{1,24}$")
@@ -140,11 +153,27 @@ def _compute_totals(
 
 
 def fetch_quotes_map(symbols: list[str]) -> dict[str, dict[str, Any]]:
-    """Quote map keyed by symbol — uses parallel Yahoo fetches (not sequential per ticker)."""
+    """Quote map keyed by symbol. Fast path skips market-cap Yahoo .info calls (with_mcap=False)."""
     syms = list(dict.fromkeys(s for s in symbols if s))
     if not syms:
         return {}
-    rows = market_service.fetch_quotes_for_symbols(syms)
+    rows: list[dict[str, Any]] = []
+    batch_error = False
+    try:
+        rows = market_service.fetch_quotes_for_symbols(syms, with_mcap=False)
+    except Exception:
+        batch_error = True
+        rows = []
+    # Only sequential fallback when the parallel batch raised — not when Yahoo returned empty
+    # (retrying every symbol sequentially doubles load and slows the page badly).
+    if batch_error and syms:
+        for s in syms:
+            try:
+                q = market_service.fetch_quote(s, with_mcap=False)
+                if q:
+                    rows.append(q)
+            except Exception:
+                continue
     out: dict[str, dict[str, Any]] = {}
     for q in rows:
         if q and q.get("symbol"):
@@ -319,6 +348,7 @@ def buy(
     )
     st = get_portfolio_state(username)
     record_snapshot(username, st)
+    invalidate_leaderboard_cache()
     return True, "", st
 
 
@@ -391,6 +421,7 @@ def sell(
     )
     st = get_portfolio_state(username)
     record_snapshot(username, st)
+    invalidate_leaderboard_cache()
     return True, "", st
 
 
@@ -426,6 +457,7 @@ def credit_reward(username: str, amount: float, note: str) -> tuple[bool, str]:
     )
     st = get_portfolio_state(username)
     record_snapshot(username, st)
+    invalidate_leaderboard_cache()
     return True, "ok"
 
 
@@ -537,6 +569,15 @@ def can_view_portfolio(viewer: str, owner: str) -> bool:
 
 def leaderboard(limit: int = 25) -> list[dict[str, Any]]:
     """Rank users by total portfolio value (cash + holdings at last prices)."""
+    global _LEADERBOARD_CACHE_TS, _LEADERBOARD_CACHE_ROWS
+    lim = max(1, min(limit, 100))
+    now = time.time()
+    if (
+        _LEADERBOARD_CACHE_ROWS
+        and now - _LEADERBOARD_CACHE_TS < _LEADERBOARD_TTL_SEC
+    ):
+        return _LEADERBOARD_CACHE_ROWS[:lim]
+
     db = connect()
     cur = db.cursor()
     cur.execute("SELECT username, cash FROM paper_accounts")
@@ -571,11 +612,12 @@ def leaderboard(limit: int = 25) -> list[dict[str, Any]]:
         ranked.append((u, tv))
 
     ranked.sort(key=lambda x: x[1], reverse=True)
-    lim = max(1, min(limit, 100))
-    out = []
-    for i, (uname, tv) in enumerate(ranked[:lim], start=1):
-        out.append({"rank": i, "username": uname, "total_value": tv})
-    return out
+    out_full: list[dict[str, Any]] = []
+    for i, (uname, tv) in enumerate(ranked[:100], start=1):
+        out_full.append({"rank": i, "username": uname, "total_value": tv})
+    _LEADERBOARD_CACHE_TS = now
+    _LEADERBOARD_CACHE_ROWS = out_full
+    return out_full[:lim]
 
 
 def seed_initial_snapshot(username: str) -> None:

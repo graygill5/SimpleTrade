@@ -369,11 +369,14 @@
             }
         });
 
-        getJSON("/api/paper/leaderboard").then(function (res) {
-            if (res.ok && res.d.leaderboard) {
-                renderLeaderboard(res.d.leaderboard);
-            }
-        });
+        /* Leaderboard recomputes many Yahoo quotes server-side — load after holdings paint. */
+        window.setTimeout(function () {
+            getJSON("/api/paper/leaderboard").then(function (res) {
+                if (res.ok && res.d.leaderboard) {
+                    renderLeaderboard(res.d.leaderboard);
+                }
+            });
+        }, 0);
     }
 
     /* ---- Trade UI (owner only) ---- */
