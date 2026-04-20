@@ -1,18 +1,183 @@
 {% extends "base_app.html" %}
-{% block title %}Portfolio — SimpleTrade{% endblock %}
+{% block title %}Paper portfolio — SimpleTrade{% endblock %}
 {% block nav_pill %}Portfolio{% endblock %}
 
 {% block content %}
+{% if info_message %}
+<div class="panel panel-notice" style="margin-bottom:14px;">
+    <div class="panel-bd" style="padding:12px 16px;">{{ info_message }}</div>
+</div>
+{% endif %}
+<div id="portfolio-app"
+     data-owner="{{ portfolio_owner }}"
+     data-read-only="{{ '1' if read_only else '0' }}">
 <div class="page-head">
-    <h1>Portfolio</h1>
+    <div>
+        <h1>{% if read_only %}{{ portfolio_owner }}'s portfolio{% else %}Paper portfolio{% endif %}</h1>
+        <p class="sub paper-disclaimer">
+            Simulated trading only — fake money. Not real brokerage; no real execution.
+            {% if read_only %}<span class="ro-badge">View only</span>{% endif %}
+        </p>
+    </div>
     {% set active = 'portfolio' %}
     {% include '_app_section_nav.html' %}
 </div>
 
-<section class="panel">
-    <div class="panel-hd">Your holdings</div>
-    <div style="padding:12px 16px 16px;">
-        <p class="empty">This page is a placeholder. You can add positions, performance, and allocation here in a future update.</p>
+{% if read_only %}
+<div class="panel panel-notice">
+    <div class="panel-bd" style="padding:12px 16px;">
+        You are viewing <strong>{{ portfolio_owner }}</strong>&rsquo;s paper portfolio. Trading controls are hidden.
+    </div>
+</div>
+{% endif %}
+
+<div class="paper-stats">
+    <div class="paper-stat">
+        <div class="k">Cash</div>
+        <div class="v" id="pv-cash">—</div>
+    </div>
+    <div class="paper-stat">
+        <div class="k">Invested</div>
+        <div class="v" id="pv-invested">—</div>
+    </div>
+    <div class="paper-stat">
+        <div class="k">Total value</div>
+        <div class="v" id="pv-total">—</div>
+    </div>
+    <div class="paper-stat">
+        <div class="k">Total P/L (vs $10k start)</div>
+        <div class="v" id="pv-pl">—</div>
+    </div>
+</div>
+
+<div class="paper-charts-grid">
+    <section class="panel paper-chart-panel">
+        <div class="panel-hd">Overall performance</div>
+        <div class="panel-bd paper-chart-bd">
+            <p class="chart-hint">Total account value over time (snapshots on trades &amp; rewards).</p>
+            <div class="chart-canvas-wrap paper-main-chart-wrap">
+                <canvas id="paper-equity-chart" height="220"></canvas>
+            </div>
+            <p class="empty" id="paper-equity-empty" hidden>No history yet — place a trade or earn a learning reward.</p>
+        </div>
+    </section>
+    <section class="panel paper-chart-panel">
+        <div class="panel-hd">Allocation</div>
+        <div class="panel-bd paper-chart-bd">
+            <div class="chart-canvas-wrap paper-doughnut-wrap">
+                <canvas id="paper-alloc-chart" height="220"></canvas>
+            </div>
+            <p class="empty" id="paper-alloc-empty" hidden>100% cash — add positions to see allocation.</p>
+        </div>
+    </section>
+</div>
+
+{% if not read_only %}
+<section class="panel paper-trade-panel">
+    <div class="panel-hd">Trade (paper)</div>
+    <div class="panel-bd paper-trade-bd">
+        <div class="paper-trade-row">
+            <div class="search-row paper-search">
+                <input type="text" id="paper-symbol-search" placeholder="Symbol (e.g. AAPL)" autocomplete="off" />
+                <div class="search-dd" id="paper-search-dd"></div>
+            </div>
+            <label class="paper-shares-label">
+                Shares
+                <input type="number" id="paper-shares" min="0.0001" step="any" placeholder="0" />
+            </label>
+            <div class="paper-quote-preview" id="paper-quote-preview">—</div>
+            <div class="paper-trade-btns">
+                <button type="button" class="btn btn-primary" id="paper-btn-buy">Buy</button>
+                <button type="button" class="btn" id="paper-btn-sell">Sell</button>
+            </div>
+        </div>
+        <p class="paper-trade-hint">Uses the same delayed Yahoo quotes as the rest of the app. Whole shares or decimals (e.g. 1.5).</p>
     </div>
 </section>
+{% endif %}
+
+<section class="panel">
+    <div class="panel-hd">Holdings</div>
+    <div style="padding:0 0 12px;">
+        <div class="table-scroll">
+            <table class="wl-table paper-holdings-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Name</th>
+                        <th class="rm">Shares</th>
+                        <th class="rm">Avg cost</th>
+                        <th class="rm">Last</th>
+                        <th class="rm">Mkt value</th>
+                        <th class="rm">Unrealized P/L</th>
+                        <th class="rm">30d price</th>
+                    </tr>
+                </thead>
+                <tbody id="paper-holdings-body">
+                    <tr><td colspan="8" class="empty">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="panel-hd">Transaction history</div>
+    <div style="padding:0 0 12px;">
+        <div class="table-scroll">
+            <table class="wl-table paper-tx-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Type</th>
+                        <th>Symbol</th>
+                        <th class="rm">Shares</th>
+                        <th class="rm">Price</th>
+                        <th class="rm">Amount</th>
+                        <th class="rm">Cash after</th>
+                        <th>Note</th>
+                    </tr>
+                </thead>
+                <tbody id="paper-tx-body">
+                    <tr><td colspan="8" class="empty">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+{% if not read_only %}
+<section class="panel">
+    <div class="panel-hd">Friends who can view your portfolio</div>
+    <div class="panel-bd paper-friends-bd">
+        <p class="paper-friends-hint">Read-only access — they cannot trade for you. Enter an exact username that already has an account.</p>
+        <div class="paper-friends-add">
+            <input type="text" id="paper-friend-input" placeholder="Friend username" autocomplete="off" />
+            <button type="button" class="btn btn-primary" id="paper-friend-add">Add viewer</button>
+        </div>
+        <ul class="paper-friends-list" id="paper-friends-list"></ul>
+        <p class="paper-share-link" id="paper-share-wrap" hidden>
+            Share this read-only link:<br />
+            <code id="paper-share-url"></code>
+        </p>
+    </div>
+</section>
+{% endif %}
+
+<section class="panel">
+    <div class="panel-hd">Leaderboard (paper account value)</div>
+    <div class="panel-bd">
+        <p class="leaderboard-note">Everyone starts with <strong>$10,000</strong> paper cash. Rankings use latest Yahoo prices + cash.</p>
+        <ol class="leaderboard-list" id="paper-leaderboard">
+            <li class="empty">Loading…</li>
+        </ol>
+    </div>
+</section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/portfolio.js') }}"></script>
 {% endblock %}

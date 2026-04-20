@@ -1,18 +1,125 @@
 {% extends "base_app.html" %}
-{% block title %}Chats — SimpleTrade{% endblock %}
+{% block title %}Chats &amp; Social — SimpleTrade{% endblock %}
 {% block nav_pill %}Chats{% endblock %}
 
 {% block content %}
 <div class="page-head">
-    <h1>Chats</h1>
+    <div>
+        <h1>Chats &amp; Social</h1>
+        <p class="sub paper-disclaimer">One <strong>live global</strong> room for everyone. <strong>Groups &amp; DMs</strong> are for friends you add — like a lightweight Discord for your trading crew.</p>
+    </div>
     {% set active = 'chats' %}
     {% include '_app_section_nav.html' %}
 </div>
 
-<section class="panel">
-    <div class="panel-hd">Conversations</div>
-    <div style="padding:12px 16px 16px;">
-        <p class="empty">This page is a placeholder. You can add threads, history, and messaging here in a future update.</p>
+<div class="social-layout" id="social-app">
+    <aside class="social-sidebar social-rooms">
+        <div class="social-sidebar-hd">Rooms</div>
+        <div class="social-room-actions">
+            <button type="button" class="btn btn-primary" id="social-btn-new-group">+ Group</button>
+            <button type="button" class="btn" id="social-btn-new-dm">Message friend</button>
+        </div>
+        <ul class="social-room-list" id="social-room-list"></ul>
+    </aside>
+
+    <section class="social-main">
+        <div class="social-main-hd">
+            <div>
+                <h2 id="social-room-title">Market Chat</h2>
+                <p class="social-room-desc" id="social-room-desc"></p>
+            </div>
+            <span class="social-room-kind" id="social-room-kind"></span>
+        </div>
+        <div class="social-messages" id="social-messages" aria-live="polite"></div>
+        <form class="social-composer" id="social-composer">
+            <label class="social-file-wrap">
+                <input type="file" id="social-file" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" />
+                <span class="social-file-label">Attach</span>
+            </label>
+            <input type="text" id="social-input" placeholder="Message (optional if you attach a file)…" maxlength="4000" autocomplete="off" />
+            <button type="submit" class="btn btn-primary">Send</button>
+        </form>
+        <div id="social-file-notice" class="social-file-notice" hidden role="status" aria-live="polite">
+            <span id="social-file-notice-msg" class="social-file-notice-msg"></span>
+            <button type="button" class="link social-file-notice-clear" id="social-file-clear">Remove</button>
+        </div>
+        <p class="social-upload-hint">Images (JPEG, PNG, GIF, WebP) or PDF up to 8 MB — charts, screenshots, notes.</p>
+        <div class="social-group-invite" id="social-group-invite" hidden>
+            <div id="social-invite-member-notice" class="social-invite-member-notice" hidden>
+                <p>Only the group owner can invite new members to this group.</p>
+            </div>
+            <div id="social-invite-form-wrap">
+                <span class="social-invite-label">Invite a friend</span>
+                <div class="social-invite-row">
+                    <input type="text" id="social-invite-input" placeholder="Username" autocomplete="off" />
+                    <button type="button" class="btn" id="social-invite-btn">Invite</button>
+                </div>
+                <p id="social-invite-feedback" class="social-invite-feedback" hidden role="status" aria-live="polite"></p>
+            </div>
+        </div>
+    </section>
+
+    <aside class="social-sidebar social-rail">
+        <div class="social-tabs">
+            <button type="button" class="social-tab active" data-tab="friends">Friends</button>
+            <button type="button" class="social-tab" data-tab="profile">Profile</button>
+        </div>
+
+        <div class="social-tab-panel" id="social-panel-friends">
+            <div class="social-subhd">Incoming requests</div>
+            <ul class="social-request-list" id="social-incoming"></ul>
+            <div class="social-subhd">Outgoing requests</div>
+            <ul class="social-request-list" id="social-outgoing"></ul>
+            <div class="social-subhd">Add friend</div>
+            <div class="social-add-row">
+                <input type="text" id="social-friend-add" placeholder="Username" autocomplete="off" />
+                <button type="button" class="btn btn-primary" id="social-friend-btn">Send request</button>
+            </div>
+            <div class="social-subhd">Your friends</div>
+            <ul class="social-friends-list" id="social-friends"></ul>
+        </div>
+
+        <div class="social-tab-panel" id="social-panel-profile" hidden>
+            <div class="social-subhd">Your profile</div>
+            <label class="social-label">Display name</label>
+            <input type="text" id="social-display-name" maxlength="64" />
+            <label class="social-label">Bio</label>
+            <textarea id="social-bio" rows="4" maxlength="500" placeholder="A short intro…"></textarea>
+            <button type="button" class="btn btn-primary" id="social-save-profile">Save</button>
+        </div>
+    </aside>
+</div>
+
+<div class="social-modal-backdrop" id="social-modal-group" hidden>
+    <div class="social-modal" role="dialog" aria-labelledby="social-modal-group-title">
+        <h3 id="social-modal-group-title">New trading group</h3>
+        <p class="social-modal-hint">Pick a name and choose which friends to add now (they must already be on your friends list).</p>
+        <label class="social-label">Group name</label>
+        <input type="text" id="social-group-name" maxlength="80" placeholder="e.g. Tech swing traders" />
+        <div class="social-subhd" style="margin-top:14px;">Add friends to this group</div>
+        <div id="social-group-friends-picks" class="social-checkbox-list"></div>
+        <div class="social-modal-actions">
+            <button type="button" class="btn" id="social-group-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="social-group-create">Create</button>
+        </div>
     </div>
-</section>
+</div>
+
+<div class="social-modal-backdrop" id="social-modal-dm" hidden>
+    <div class="social-modal" role="dialog" aria-labelledby="social-modal-dm-title">
+        <h3 id="social-modal-dm-title">Direct message</h3>
+        <p class="social-modal-hint">DMs are only between friends. Type to filter by username, or leave the search empty and scroll the full list.</p>
+        <label class="social-label" for="social-dm-search">Find a friend</label>
+        <input type="text" id="social-dm-search" placeholder="Type a username…" autocomplete="off" />
+        <div id="social-dm-list" class="social-dm-pick-list" role="listbox" aria-label="Friends on your list"></div>
+        <div class="social-modal-actions">
+            <button type="button" class="btn" id="social-dm-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="social-dm-open">Open chat</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/chats.js') }}"></script>
 {% endblock %}

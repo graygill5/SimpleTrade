@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -49,6 +50,7 @@ def _movers_symbols() -> list[str]:
 
 
 _CACHE: dict[str, tuple[float, Any, float]] = {}
+_MOVER_ROWS_LOCK = threading.Lock()
 # Default cache for news, single-ticker fetches
 _TTL_DEFAULT = 120.0
 # Index tape: parallel Yahoo calls; cache longer to avoid repeat bursts
@@ -245,13 +247,18 @@ def _rows_from_history(symbols: list[str]) -> list[dict[str, Any]]:
 
 
 def _mover_universe_rows() -> list[dict[str, Any]]:
+    """Single cached Yahoo pull for movers + trending; lock avoids parallel duplicate fetches."""
     ck = "mover_rows_raw"
     hit = _cache_get(ck)
     if hit is not None:
         return hit
-    rows = _rows_from_history(_movers_symbols())
-    _cache_set(ck, rows, ttl=_TTL_MOVERS)
-    return rows
+    with _MOVER_ROWS_LOCK:
+        hit = _cache_get(ck)
+        if hit is not None:
+            return hit
+        rows = _rows_from_history(_movers_symbols())
+        _cache_set(ck, rows, ttl=_TTL_MOVERS)
+        return rows
 
 
 def fetch_movers() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
