@@ -16,7 +16,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")
 # Leaderboard recomputes Yahoo quotes for every distinct holding symbol — cache full rank list briefly.
 _LEADERBOARD_CACHE_TS: float = 0.0
 _LEADERBOARD_CACHE_ROWS: list[dict[str, Any]] = []
-_LEADERBOARD_TTL_SEC = 75.0
+_LEADERBOARD_TTL_SEC = 300.0
 
 
 def invalidate_leaderboard_cache() -> None:
@@ -158,26 +158,31 @@ def fetch_quotes_map(symbols: list[str]) -> dict[str, dict[str, Any]]:
     if not syms:
         return {}
     rows: list[dict[str, Any]] = []
-    batch_error = False
     try:
         rows = market_service.fetch_quotes_for_symbols(syms, with_mcap=False)
     except Exception:
-        batch_error = True
         rows = []
-    # Only sequential fallback when the parallel batch raised — not when Yahoo returned empty
-    # (retrying every symbol sequentially doubles load and slows the page badly).
-    if batch_error and syms:
-        for s in syms:
-            try:
-                q = market_service.fetch_quote(s, with_mcap=False)
-                if q:
-                    rows.append(q)
-            except Exception:
-                continue
+
     out: dict[str, dict[str, Any]] = {}
     for q in rows:
         if q and q.get("symbol"):
             out[str(q["symbol"]).upper()] = q
+
+    try:
+        cap = int(os.environ.get("SIMPLETRADE_QUOTE_FALLBACK_MAX", "48"))
+    except ValueError:
+        cap = 48
+    cap = max(0, min(cap, 200))
+
+    missing = [(s or "").strip().upper() for s in syms if (s or "").strip().upper() not in out]
+    if missing and cap > 0:
+        for sym in missing[:cap]:
+            try:
+                q = market_service.fetch_quote(sym, with_mcap=False)
+                if q and q.get("symbol"):
+                    out[str(q["symbol"]).upper()] = q
+            except Exception:
+                continue
     return out
 
 
@@ -282,7 +287,8 @@ def buy(
     if sh <= 0:
         return False, "Share amount must be positive.", None
 
-    q = market_service.fetch_quote(sym)
+    # Trades should use a fresh pull instead of cached snapshot.
+    q = market_service.fetch_quote(sym, force_refresh=True)
     if not q or q.get("price") is None:
         return False, "Quote unavailable for that symbol.", None
     sym = q.get("symbol") or sym
@@ -362,7 +368,8 @@ def sell(
     if sh <= 0:
         return False, "Share amount must be positive.", None
 
-    q = market_service.fetch_quote(sym)
+    # Trades should use a fresh pull instead of cached snapshot.
+    q = market_service.fetch_quote(sym, force_refresh=True)
     if not q or q.get("price") is None:
         return False, "Quote unavailable for that symbol.", None
     sym = q.get("symbol") or sym
@@ -553,18 +560,12 @@ def list_viewers(owner: str) -> list[str]:
 def can_view_portfolio(viewer: str, owner: str) -> bool:
     if viewer == owner:
         return True
-    db = connect()
-    cur = db.cursor()
-    cur.execute(
-        """
-        SELECT 1 FROM portfolio_viewers
-        WHERE owner_username=? AND viewer_username=?
-        """,
-        (owner, viewer),
-    )
-    ok = cur.fetchone() is not None
-    db.close()
-    return ok
+    try:
+        import social_service
+
+        return social_service.are_friends(viewer, owner)
+    except Exception:
+        return False
 
 
 def leaderboard(limit: int = 25) -> list[dict[str, Any]]:

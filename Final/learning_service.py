@@ -5,15 +5,18 @@ Calendar day = server local date (YYYY-MM-DD). Does not touch market/Yahoo code.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+import time
+import uuid
+from datetime import date, timedelta
 from typing import Any
 
+import ai_service
 import paper_service as ps
 
 DB_PATH = ps.DB_PATH
 
 REWARD_PER_MODULE = 10_000.0
-DAILY_ALL_BONUS = 10_000.0
+DAILY_ALL_BONUS = 50_000.0
 
 # --------- Module catalog (quiz answers stay server-side only) ---------
 
@@ -27,7 +30,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "stocks_equities",
         "title": "Stocks & equity basics",
         "tagline": "What owning a share really means.",
-        "icon": "📈",
+        "icon": "Module 1",
         "lessons": [
             "A **stock** (share) is a fraction of ownership in a company. Public companies split ownership into shares that trade on exchanges.",
             "**Common stock** usually brings voting rights and participation in dividends if the board declares them. Prices move with expectations about future profits and risk.",
@@ -81,7 +84,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "etfs_index_funds",
         "title": "ETFs & index funds",
         "tagline": "Bundles, tracking error, and costs.",
-        "icon": "📊",
+        "icon": "Module 2",
         "lessons": [
             "An **ETF** trades intraday like a stock and usually tracks an index or theme. **Index mutual funds** price once daily and often track similar benchmarks.",
             "**Expense ratios** and tracking differences matter — small fees compound. Some ETFs use derivatives; read the prospectus for niche products.",
@@ -134,7 +137,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "risk_and_return",
         "title": "Risk & return",
         "tagline": "Volatility, drawdowns, and realistic expectations.",
-        "icon": "⚖️",
+        "icon": "Module 3",
         "lessons": [
             "**Risk** includes losing principal; higher expected long-run returns usually pair with higher uncertainty.",
             "**Volatility** (swings up/down) is not the only risk — liquidity, concentration, and behavioral mistakes matter too.",
@@ -187,7 +190,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "diversification",
         "title": "Diversification",
         "tagline": "Spreading bets without di-worsifying.",
-        "icon": "🧺",
+        "icon": "Module 4",
         "lessons": [
             "Owning many imperfectly correlated assets can **lower portfolio volatility** without necessarily sacrificing expected return — same market risk remains.",
             "Adding highly correlated bets doesn't diversify much; seek **different drivers** (sectors, styles, geographies where appropriate).",
@@ -240,7 +243,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "orders_execution",
         "title": "Orders & execution",
         "tagline": "Market vs limit — what you're asking the market to do.",
-        "icon": "📝",
+        "icon": "Module 5",
         "lessons": [
             "**Market orders** prioritize speed of fill; price can slip in fast tape.",
             "**Limit orders** cap buy price or floor sell price — may not fill if market never reaches your level.",
@@ -293,7 +296,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "bid_ask_spreads",
         "title": "Bid/ask & spreads",
         "tagline": "Where trades actually happen.",
-        "icon": "↔️",
+        "icon": "Module 6",
         "lessons": [
             "**Bid** is what buyers pay; **ask** is what sellers demand. The gap is the **spread**.",
             "Wider spreads often mean thinner liquidity — your effective cost rises when you cross the spread.",
@@ -346,7 +349,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "market_news",
         "title": "Reading market news",
         "tagline": "Headlines move sentiment — verify and stay calm.",
-        "icon": "📰",
+        "icon": "Module 7",
         "lessons": [
             "News can be **noisy**, late, or sensational. Cross-check material facts; distinguish opinion from data.",
             "Short-term price jumps on headlines often **mean-revert** after detail emerges — avoid panic trades.",
@@ -399,7 +402,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "portfolio_basics",
         "title": "Portfolio basics",
         "tagline": "Allocation, review, rebalance concepts.",
-        "icon": "💼",
+        "icon": "Module 8",
         "lessons": [
             "**Allocation** is how you split money across stocks/bonds/cash/etc. Match time horizon and tolerance — not generic advice here.",
             "**Rebalancing** trims winners and tops losers on a schedule to stay near policy weights — can feel wrong emotionally.",
@@ -452,7 +455,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "trading_psychology",
         "title": "Trading psychology",
         "tagline": "Plans, discipline, avoiding revenge trades.",
-        "icon": "🧠",
+        "icon": "Module 9",
         "lessons": [
             "**FOMO** and **revenge trading** after losses often enlarge mistakes. Predefine risk per trade and walk away at limits.",
             "Keeping a simple **journal** (why in/out) beats relying on memory after emotions spike.",
@@ -505,7 +508,7 @@ _MODULES: list[dict[str, Any]] = [
         "id": "regulations_basics",
         "title": "Rules & account basics",
         "tagline": "High-level U.S. retail concepts — not legal advice.",
-        "icon": "⚠️",
+        "icon": "Module 10",
         "lessons": [
             "Regulators require **risk disclosures**; pattern-day-trader rules affect margin accounts under U.S. rules — details vary by broker and region.",
             "**Insider trading** laws restrict trading on material nonpublic information — entertainment ≠ research.",
@@ -557,6 +560,8 @@ _MODULES: list[dict[str, Any]] = [
 ]
 
 MODULE_COUNT = len(_MODULES)
+AI_QUIZ_TTL_SEC = 60 * 45
+_AI_QUIZ_STORE: dict[str, dict[str, Any]] = {}
 
 
 def connect() -> sqlite3.Connection:
@@ -678,6 +683,90 @@ def _grade(module_id: str, answers: list[int]) -> tuple[bool, str]:
     return True, "ok"
 
 
+def _make_ai_quiz_key(username: str, module_id: str) -> str:
+    return f"{username}::{module_id}"
+
+
+def _cleanup_ai_quiz_store() -> None:
+    now = time.time()
+    stale = [
+        k
+        for k, v in _AI_QUIZ_STORE.items()
+        if now - float(v.get("created_at_ts") or 0.0) > AI_QUIZ_TTL_SEC
+    ]
+    for k in stale:
+        _AI_QUIZ_STORE.pop(k, None)
+
+
+def generate_ai_quiz_for_user(
+    username: str, module_id: str, question_count: int = 10
+) -> tuple[bool, str, dict[str, Any]]:
+    m = _by_id(module_id)
+    if not m:
+        return False, "Unknown module.", {}
+    _cleanup_ai_quiz_store()
+    quiz_rows, err = ai_service.generate_learning_quiz(
+        m["title"], "\n".join(m["lessons"]), question_count=question_count
+    )
+    if err or not quiz_rows:
+        return False, err or "Could not generate quiz.", {}
+
+    quiz_id = uuid.uuid4().hex
+    _AI_QUIZ_STORE[_make_ai_quiz_key(username, module_id)] = {
+        "quiz_id": quiz_id,
+        "created_at_ts": time.time(),
+        "questions": quiz_rows,
+    }
+    return True, "ok", {
+        "quiz_id": quiz_id,
+        "questions": [
+            {"question": q["question"], "choices": q["choices"]} for q in quiz_rows
+        ],
+    }
+
+
+def _grade_ai_quiz(
+    username: str, module_id: str, quiz_id: str, answers: list[int]
+) -> tuple[bool, str, dict[str, Any]]:
+    _cleanup_ai_quiz_store()
+    rec = _AI_QUIZ_STORE.get(_make_ai_quiz_key(username, module_id))
+    if not rec:
+        return False, "Generate a new quiz for this module first.", {}
+    if rec.get("quiz_id") != quiz_id:
+        return False, "Quiz session expired. Generate a new quiz.", {}
+    qs = rec.get("questions") or []
+    if len(answers) != len(qs):
+        return False, f"Expected {len(qs)} answers.", {}
+    incorrect: list[int] = []
+    correct_indices: list[int] = []
+    for i, q in enumerate(qs):
+        ci = int(q.get("correct_index", -1))
+        correct_indices.append(ci)
+        try:
+            a = int(answers[i])
+        except (TypeError, ValueError):
+            return False, "Answers must be integers (choice index).", {}
+        if a < 0 or a > 3:
+            return False, "Invalid choice index.", {}
+        if a != ci:
+            incorrect.append(i)
+    if incorrect:
+        return False, "Some answers were incorrect. Review highlights and try again.", {
+            "grade": {
+                "all_correct": False,
+                "incorrect_indexes": incorrect,
+                "correct_indexes": correct_indices,
+            }
+        }
+    return True, "ok", {
+        "grade": {
+            "all_correct": True,
+            "incorrect_indexes": [],
+            "correct_indexes": correct_indices,
+        }
+    }
+
+
 def _bonus_taken(username: str, completion_date: str) -> bool:
     db = connect()
     cur = db.cursor()
@@ -733,15 +822,21 @@ def _grant_bonus_if_eligible(username: str, completion_date: str) -> float:
 
 
 def submit_quiz(
-    username: str, module_id: str, answers: list[Any]
+    username: str, module_id: str, answers: list[Any], quiz_id: str = ""
 ) -> tuple[bool, str, dict[str, Any]]:
     """Returns ok, message, payload with rewards and updated learning state."""
     mid = (module_id or "").strip()
     d = today_iso()
 
-    okg, msg = _grade(mid, list(answers))
+    if quiz_id.strip():
+        okg, msg, grade_payload = _grade_ai_quiz(
+            username, mid, quiz_id.strip(), list(answers)
+        )
+    else:
+        okg, msg = _grade(mid, list(answers))
+        grade_payload = {}
     if not okg:
-        return False, msg, {}
+        return False, msg, grade_payload
 
     amt = ps._money(REWARD_PER_MODULE)
     ps.ensure_paper_account(username)
@@ -807,6 +902,7 @@ def submit_quiz(
         "module_reward_usd": REWARD_PER_MODULE,
         "bonus_reward_usd": bonus_extra,
         "state": st,
+        **grade_payload,
     }
 
 
@@ -818,3 +914,29 @@ def ai_outline_for_module(module_id: str) -> str:
     lines = [m["title"], m["tagline"]]
     lines.extend(m["lessons"][:3])
     return "\n".join(lines)
+
+
+def completion_stats(username: str) -> dict[str, int]:
+    """Completion counts for profile surfaces."""
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+    db = connect()
+    cur = db.cursor()
+    cur.execute(
+        "SELECT COUNT(*) FROM learning_completions WHERE username=?",
+        (username,),
+    )
+    total_row = cur.fetchone()
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT module_id) FROM learning_daily_completions
+        WHERE username=? AND completion_date>=?
+        """,
+        (username, week_start.isoformat()),
+    )
+    week_row = cur.fetchone()
+    db.close()
+    return {
+        "total_completed": int(total_row[0]) if total_row else 0,
+        "completed_this_week": int(week_row[0]) if week_row else 0,
+    }

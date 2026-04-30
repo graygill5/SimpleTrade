@@ -105,7 +105,15 @@
                 "social-room-item" + (r.id === activeRoomId ? " active" : "");
             li.setAttribute("data-id", String(r.id));
             li.setAttribute("data-kind", r.kind);
-            li.textContent = r.label || r.name || "Room";
+            if (r.kind === "global") {
+                li.innerHTML =
+                    '<span class="social-live-dot" aria-hidden="true"></span>' +
+                    '<span class="social-live-label">' +
+                    escapeHtml(r.label || r.name || "Live chat") +
+                    "</span>";
+            } else {
+                li.textContent = r.label || r.name || "Room";
+            }
             li.addEventListener("click", function () {
                 selectRoom(r);
             });
@@ -370,9 +378,13 @@
                         '<span class="social-friend-name">' +
                         escapeHtml(name) +
                         "</span></div>" +
+                        '<div class="social-req-actions">' +
                         '<button type="button" class="btn social-friend-msg" data-user="' +
                         escapeHtml(name) +
-                        '">Message</button>';
+                        '">Message</button>' +
+                        '<button type="button" class="btn social-friend-profile" data-profile-user="' +
+                        escapeHtml(name) +
+                        '">Profile</button></div>';
                     fr.appendChild(li);
                 });
                 fr.querySelectorAll(".social-friend-msg").forEach(function (btn) {
@@ -380,8 +392,69 @@
                         openDm(btn.getAttribute("data-user"));
                     });
                 });
+                fr.querySelectorAll(".social-friend-profile").forEach(function (btn) {
+                    btn.addEventListener("click", function () {
+                        openFriendProfile(btn.getAttribute("data-profile-user"));
+                    });
+                });
             }
         }
+    }
+
+    function hideFriendProfileModal() {
+        var m = document.getElementById("social-modal-friend-profile");
+        if (m) m.hidden = true;
+    }
+
+    function openFriendProfile(username) {
+        if (!username) return;
+        var m = document.getElementById("social-modal-friend-profile");
+        var sub = document.getElementById("social-friend-profile-sub");
+        var stats = document.getElementById("social-friend-learning-stats");
+        var link = document.getElementById("social-friend-portfolio-link");
+        if (!m || !sub || !stats || !link) return;
+        sub.textContent = "Loading profile...";
+        stats.textContent = "Loading learning stats...";
+        link.href = "/portfolio";
+        link.setAttribute("aria-disabled", "true");
+        api("/api/social/profile/" + encodeURIComponent(username)).then(function (res) {
+            if (!res.ok) {
+                sub.textContent = res.d.error || "Could not load profile.";
+                stats.textContent = "";
+                link.href = "/portfolio";
+                link.setAttribute("aria-disabled", "true");
+                m.hidden = false;
+                return;
+            }
+            var p = res.d.profile || {};
+            var l = res.d.learning || {};
+            sub.textContent =
+                (p.display_name || username) +
+                (p.bio ? " — " + p.bio : "");
+            stats.innerHTML =
+                '<div class="social-learning-grid">' +
+                '<div class="social-learning-card">' +
+                '<div class="social-learning-label">This week</div>' +
+                '<div class="social-learning-value">' +
+                String(l.completed_this_week || 0) +
+                "</div>" +
+                "</div>" +
+                '<div class="social-learning-card">' +
+                '<div class="social-learning-label">Total completed</div>' +
+                '<div class="social-learning-value">' +
+                String(l.total_completed || 0) +
+                "</div>" +
+                "</div>" +
+                "</div>";
+            if (res.d.can_view_portfolio) {
+                link.href = "/portfolio/view/" + encodeURIComponent(username);
+                link.removeAttribute("aria-disabled");
+            } else {
+                link.href = "#";
+                link.setAttribute("aria-disabled", "true");
+            }
+            m.hidden = false;
+        });
     }
 
     function respondFriend(fromUser, accept) {
@@ -618,6 +691,18 @@
                     return;
                 }
                 openDm(dmPickSelected);
+            });
+    document.getElementById("social-friend-profile-close") &&
+        document
+            .getElementById("social-friend-profile-close")
+            .addEventListener("click", hideFriendProfileModal);
+    document.getElementById("social-modal-friend-profile") &&
+        document
+            .getElementById("social-modal-friend-profile")
+            .addEventListener("click", function (e) {
+                if (e.target.id === "social-modal-friend-profile") {
+                    hideFriendProfileModal();
+                }
             });
 
     document.getElementById("social-friend-btn") &&

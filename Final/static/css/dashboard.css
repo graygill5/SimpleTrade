@@ -732,6 +732,10 @@ a.btn.btn-nav[aria-current="page"] {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border);
 }
+.bubble.loading {
+    color: var(--muted);
+    font-style: italic;
+}
 .bubble .hint {
     font-size: 0.72rem;
     color: var(--muted);
@@ -796,6 +800,7 @@ a.btn.btn-nav[aria-current="page"] {
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 14px 16px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 .paper-stat .k {
     font-size: 0.72rem;
@@ -806,14 +811,31 @@ a.btn.btn-nav[aria-current="page"] {
 }
 .paper-stat .v {
     font-family: var(--mono);
-    font-size: 1.15rem;
-    font-weight: 600;
+    font-size: 1.22rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
 }
 .paper-stat .v.up {
     color: var(--up);
 }
 .paper-stat .v.down {
     color: var(--down);
+}
+.paper-stat-cash {
+    border-color: rgba(56, 189, 248, 0.35);
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.1), rgba(12, 17, 29, 0.96));
+}
+.paper-stat-invested {
+    border-color: rgba(251, 191, 36, 0.35);
+    background: linear-gradient(180deg, rgba(251, 191, 36, 0.1), rgba(12, 17, 29, 0.96));
+}
+.paper-stat-worth {
+    border-color: rgba(167, 139, 250, 0.35);
+    background: linear-gradient(180deg, rgba(167, 139, 250, 0.1), rgba(12, 17, 29, 0.96));
+}
+.paper-stat-pl {
+    border-color: rgba(52, 211, 153, 0.3);
+    background: linear-gradient(180deg, rgba(52, 211, 153, 0.08), rgba(12, 17, 29, 0.96));
 }
 
 .paper-charts-grid {
@@ -1084,6 +1106,19 @@ a.btn.btn-nav[aria-current="page"] {
 .social-room-item.active {
     background: rgba(56, 189, 248, 0.1);
     border-color: rgba(56, 189, 248, 0.25);
+}
+.social-live-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #ef4444;
+    margin-right: 8px;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+    vertical-align: middle;
+}
+.social-live-label {
+    vertical-align: middle;
 }
 
 .social-main {
@@ -1432,6 +1467,10 @@ a.btn.btn-nav[aria-current="page"] {
     border-color: rgba(56, 189, 248, 0.55);
     background: rgba(56, 189, 248, 0.16);
 }
+#social-friend-portfolio-link[aria-disabled="true"] {
+    opacity: 0.5;
+    pointer-events: none;
+}
 .social-label {
     display: block;
     font-size: 0.75rem;
@@ -1575,6 +1614,33 @@ a.btn.btn-nav[aria-current="page"] {
     justify-content: flex-end;
     margin-top: 18px;
 }
+.social-friend-learning-stats {
+    margin-top: 8px;
+}
+.social-learning-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+    gap: 10px;
+}
+.social-learning-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.04);
+}
+.social-learning-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+.social-learning-value {
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--accent);
+}
 .social-checkbox-list {
     max-height: 200px;
     overflow-y: auto;
@@ -1644,6 +1710,9 @@ a.btn.btn-nav[aria-current="page"] {
 /* -------- Learning modules -------- */
 .learn-tagline strong {
     color: var(--accent);
+}
+.learn-tagline {
+    max-width: 760px;
 }
 .learn-hero-panel .panel-hd {
     display: none;
@@ -1738,8 +1807,22 @@ a.btn.btn-nav[aria-current="page"] {
     border-color: rgba(52, 211, 153, 0.25);
 }
 .learn-card-icon {
-    font-size: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    background: rgba(56, 189, 248, 0.1);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     line-height: 1;
+    text-transform: uppercase;
 }
 .learn-card-main {
     flex: 1;
@@ -1831,6 +1914,35 @@ a.btn.btn-nav[aria-current="page"] {
     color: var(--muted);
     line-height: 1.45;
 }
+.learn-module-graphic {
+    margin: 0 0 14px;
+    padding: 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(37, 99, 235, 0.14));
+}
+.learn-module-graphic-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 82px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(15, 23, 42, 0.35);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #dbeafe;
+}
+.learn-module-graphic-title {
+    margin-top: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
 .learn-lesson-body {
     margin-bottom: 18px;
 }
@@ -1876,6 +1988,23 @@ a.btn.btn-nav[aria-current="page"] {
     margin-bottom: 12px;
     font-weight: 600;
 }
+.learn-gen-quiz-btn {
+    margin-bottom: 8px;
+}
+.learn-quiz-note {
+    margin: 0 0 12px;
+    font-size: 0.76rem;
+    color: var(--muted);
+}
+.learn-quiz-empty {
+    margin: 0 0 12px;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--muted);
+    font-size: 0.84rem;
+}
 .learn-q-fieldset {
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -1897,9 +2026,26 @@ a.btn.btn-nav[aria-current="page"] {
     font-size: 0.86rem;
     line-height: 1.45;
     cursor: pointer;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid transparent;
 }
 .learn-choice input {
     margin-top: 3px;
+}
+.learn-choice.is-correct {
+    border-color: rgba(52, 211, 153, 0.5);
+    background: rgba(52, 211, 153, 0.12);
+}
+.learn-choice.is-incorrect {
+    border-color: rgba(248, 113, 113, 0.5);
+    background: rgba(248, 113, 113, 0.12);
+}
+.learn-q-fieldset.is-correct {
+    border-color: rgba(52, 211, 153, 0.45);
+}
+.learn-q-fieldset.is-incorrect {
+    border-color: rgba(248, 113, 113, 0.5);
 }
 .learn-submit-btn {
     width: 100%;

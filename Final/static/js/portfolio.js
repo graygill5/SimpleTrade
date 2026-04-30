@@ -8,6 +8,8 @@
     var equityChart = null;
     var allocChart = null;
     var holdingCharts = {};
+    var allSnapshots = [];
+    var activeEquityRange = "1m";
 
     function fmtMoney(n) {
         if (n == null || isNaN(n)) return "—";
@@ -54,12 +56,60 @@
 
     function renderSummary(p) {
         document.getElementById("pv-cash").textContent = fmtMoney(p.cash);
-        document.getElementById("pv-invested").textContent = fmtMoney(p.holdings_market_value);
-        document.getElementById("pv-total").textContent = fmtMoney(p.total_value);
+        document.getElementById("pv-invested").textContent = fmtMoney(p.cost_basis);
+        document.getElementById("pv-total").textContent = fmtMoney(p.holdings_market_value);
         var pl = document.getElementById("pv-pl");
-        var t = fmtMoney(p.total_pl) + " (" + fmtNum(p.total_pl_pct, 2) + "%)";
+        var invested = Number(p.cost_basis || 0);
+        var current = Number(p.holdings_market_value || 0);
+        var pnl = current - invested;
+        var pnlPct = invested > 0 ? (pnl / invested) * 100 : 0;
+        var t = fmtMoney(pnl) + " (" + fmtNum(pnlPct, 2) + "% vs invested)";
         pl.textContent = t;
-        pl.className = "v " + (p.total_pl >= 0 ? "up" : "down");
+        pl.className = "v " + (pnl >= 0 ? "up" : "down");
+    }
+
+    function parseSnapshotTime(s) {
+        if (!s) return null;
+        var iso = String(s).replace(" ", "T");
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return null;
+        return d;
+    }
+
+    function filterSnapshotsByRange(snapshots, rangeKey) {
+        var rows = snapshots || [];
+        if (!rows.length || rangeKey === "all") return rows;
+        var now = new Date();
+        var ms = 0;
+        if (rangeKey === "1d") ms = 24 * 60 * 60 * 1000;
+        else if (rangeKey === "1w") ms = 7 * 24 * 60 * 60 * 1000;
+        else if (rangeKey === "1m") ms = 30 * 24 * 60 * 60 * 1000;
+        else if (rangeKey === "3m") ms = 90 * 24 * 60 * 60 * 1000;
+        else if (rangeKey === "1y") ms = 365 * 24 * 60 * 60 * 1000;
+        if (!ms) return rows;
+        var cutoff = now.getTime() - ms;
+        var out = rows.filter(function (r) {
+            var d = parseSnapshotTime(r.t);
+            return d && d.getTime() >= cutoff;
+        });
+        // Keep at least two points if available.
+        if (out.length >= 2) return out;
+        return rows.slice(Math.max(0, rows.length - 2));
+    }
+
+    function trimToInvestmentStart(snapshots) {
+        var rows = snapshots || [];
+        if (!rows.length) return rows;
+        var startIdx = -1;
+        for (var i = 0; i < rows.length; i++) {
+            var inv = Number(rows[i].invested || 0);
+            if (!isNaN(inv) && inv > 0) {
+                startIdx = i;
+                break;
+            }
+        }
+        if (startIdx <= 0) return rows;
+        return rows.slice(startIdx);
     }
 
     function renderEquityChart(snapshots) {
@@ -67,11 +117,13 @@
         var empty = document.getElementById("paper-equity-empty");
         if (!canvas || typeof Chart === "undefined") return;
 
+        var scoped = filterSnapshotsByRange(snapshots, activeEquityRange);
+
         var labels = [];
         var vals = [];
-        (snapshots || []).forEach(function (s) {
+        scoped.forEach(function (s) {
             labels.push(s.t || "");
-            vals.push(s.total_value);
+            vals.push(Number(s.invested || 0));
         });
 
         if (vals.length === 0) {
@@ -84,6 +136,10 @@
         }
         if (empty) empty.hidden = true;
 
+        var up = vals.length >= 2 ? vals[vals.length - 1] >= vals[0] : true;
+        var lineColor = up ? "#34d399" : "#f87171";
+        var fillColor = up ? "rgba(52, 211, 153, 0.12)" : "rgba(248, 113, 113, 0.12)";
+
         if (equityChart) equityChart.destroy();
         equityChart = new Chart(canvas.getContext("2d"), {
             type: "line",
@@ -91,10 +147,10 @@
                 labels: labels,
                 datasets: [
                     {
-                        label: "Total value",
+                        label: "Invested portfolio value",
                         data: vals,
-                        borderColor: "#38bdf8",
-                        backgroundColor: "rgba(56, 189, 248, 0.12)",
+                        borderColor: lineColor,
+                        backgroundColor: fillColor,
                         fill: true,
                         tension: 0.2,
                         pointRadius: 0,
@@ -122,6 +178,22 @@
                     },
                 },
             },
+        });
+    }
+
+    function bindEquityTabs() {
+        var tabs = document.getElementById("paper-equity-tabs");
+        if (!tabs) return;
+        tabs.querySelectorAll(".chart-tab").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                var next = btn.getAttribute("data-range") || "1m";
+                activeEquityRange = next;
+                tabs.querySelectorAll(".chart-tab").forEach(function (b) {
+                    b.classList.remove("active");
+                });
+                btn.classList.add("active");
+                renderEquityChart(allSnapshots);
+            });
         });
     }
 
@@ -248,7 +320,11 @@
     }
 
     function loadSparklines() {
-        document.querySelectorAll("canvas.paper-spark").forEach(function (cv) {
+        var canvases = Array.prototype.slice.call(
+            document.querySelectorAll("canvas.paper-spark")
+        );
+        // Limit sparkline pulls to reduce Yahoo burst traffic.
+        canvases.slice(0, 2).forEach(function (cv) {
             var sym = cv.getAttribute("data-symbol");
             if (!sym || holdingCharts[sym]) return;
             fetch("/api/chart/" + encodeURIComponent(sym) + "?range=1m", {
@@ -357,8 +433,14 @@
             }
             var d = res.d;
             var p = d.portfolio;
+            if (!p) {
+                document.getElementById("paper-holdings-body").innerHTML =
+                    '<tr><td colspan="8" class="empty">Portfolio data unavailable. Refresh and try again.</td></tr>';
+                return;
+            }
+            allSnapshots = trimToInvestmentStart(d.snapshots || []);
             renderSummary(p);
-            renderEquityChart(d.snapshots);
+            renderEquityChart(allSnapshots);
             renderAllocChart(p);
             renderHoldings(p.positions);
         });
@@ -498,76 +580,7 @@
     if (btnBuy) btnBuy.addEventListener("click", function () { doTrade("buy"); });
     if (btnSell) btnSell.addEventListener("click", function () { doTrade("sell"); });
 
-    /* ---- Friends ---- */
-    function loadViewers() {
-        getJSON("/api/paper/viewers").then(function (res) {
-            if (!res.ok || !res.d.viewers) return;
-            var ul = document.getElementById("paper-friends-list");
-            if (!ul) return;
-            ul.innerHTML = "";
-            res.d.viewers.forEach(function (v) {
-                var li = document.createElement("li");
-                li.className = "paper-viewer-item";
-                li.innerHTML =
-                    '<span class="paper-viewer-name">' +
-                    escapeHtml(v) +
-                    '</span><button type="button" class="btn paper-viewer-remove" data-remove-viewer="' +
-                    escapeHtml(v) +
-                    '">Remove</button>';
-                ul.appendChild(li);
-            });
-            document.querySelectorAll("[data-remove-viewer]").forEach(function (btn) {
-                btn.addEventListener("click", function () {
-                    var u = btn.getAttribute("data-remove-viewer");
-                    fetch("/api/paper/viewers/" + encodeURIComponent(u), {
-                        method: "DELETE",
-                        credentials: "same-origin",
-                    }).then(function () {
-                        loadViewers();
-                    });
-                });
-            });
-            var wrap = document.getElementById("paper-share-wrap");
-            var urlEl = document.getElementById("paper-share-url");
-            if (wrap && urlEl && owner) {
-                wrap.hidden = false;
-                urlEl.textContent =
-                    window.location.origin +
-                    "/portfolio/view/" +
-                    encodeURIComponent(owner);
-            }
-        });
-    }
-
-    var friendAdd = document.getElementById("paper-friend-add");
-    var friendIn = document.getElementById("paper-friend-input");
-    if (friendAdd && friendIn) {
-        friendAdd.addEventListener("click", function () {
-            var u = friendIn.value.trim();
-            if (!u) return;
-            fetch("/api/paper/viewers", {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username: u }),
-            })
-                .then(function (r) {
-                    return r.json().then(function (d) {
-                        return { ok: r.ok, d: d };
-                    });
-                })
-                .then(function (res) {
-                    if (!res.ok) {
-                        alert(res.d.error || "Could not add");
-                        return;
-                    }
-                    friendIn.value = "";
-                    loadViewers();
-                });
-        });
-    }
-
+    bindEquityTabs();
     loadAll();
-    if (!readOnly) loadViewers();
 })();
 

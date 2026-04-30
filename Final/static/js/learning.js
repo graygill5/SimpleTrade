@@ -5,9 +5,11 @@
     var modalTitle = document.getElementById("learn-modal-title");
     var modalTag = document.getElementById("learn-modal-tagline");
     var lessonBody = document.getElementById("learn-lesson-body");
+    var lessonGraphic = document.getElementById("learn-module-graphic");
     var quizForm = document.getElementById("learn-quiz-form");
     var quizFields = document.getElementById("learn-quiz-fields");
     var quizFeedback = document.getElementById("learn-quiz-feedback");
+    var genQuizBtn = document.getElementById("learn-gen-quiz-btn");
     var aiPanel = document.getElementById("learn-ai-panel");
     var aiBtn = document.getElementById("learn-ai-btn");
     var aiOut = document.getElementById("learn-ai-output");
@@ -20,6 +22,7 @@
     var state = null;
     var activeModuleId = null;
     var moduleDetailCache = {};
+    var generatedQuizCache = {};
 
     function escapeHtml(s) {
         var d = document.createElement("div");
@@ -83,7 +86,7 @@
                 "learn-card" + (m.completed_today ? " is-done" : "");
             card.innerHTML =
                 '<span class="learn-card-icon">' +
-                escapeHtml(m.icon || "📘") +
+                escapeHtml(m.icon || "MOD") +
                 '</span><div class="learn-card-main"><div class="learn-card-title">' +
                 escapeHtml(m.title) +
                 '</div><div class="learn-card-tag">' +
@@ -135,6 +138,15 @@
         }
         if (modalTitle) modalTitle.textContent = mod.title || "";
         if (modalTag) modalTag.textContent = mod.tagline || "";
+        if (lessonGraphic) {
+            lessonGraphic.innerHTML =
+                '<div class="learn-module-graphic-chip">' +
+                escapeHtml(mod.icon || "MODULE") +
+                "</div>" +
+                '<div class="learn-module-graphic-title">' +
+                escapeHtml(mod.title || "Learning module") +
+                "</div>";
+        }
         if (lessonBody) {
             lessonBody.innerHTML = "";
             (mod.lessons || []).forEach(function (para) {
@@ -144,39 +156,21 @@
                 lessonBody.appendChild(p);
             });
         }
-        if (quizFields) {
-            quizFields.innerHTML = "";
-            (mod.questions || []).forEach(function (q, qi) {
-                var wrap = document.createElement("fieldset");
-                wrap.className = "learn-q-fieldset";
-                var leg = document.createElement("legend");
-                leg.className = "learn-q-legend";
-                leg.textContent = "Q" + (qi + 1) + ". " + (q.question || "");
-                wrap.appendChild(leg);
-                (q.choices || []).forEach(function (ch, ci) {
-                    var id = "learn-q-" + qi + "-" + ci;
-                    var lab = document.createElement("label");
-                    lab.className = "learn-choice";
-                    lab.innerHTML =
-                        '<input type="radio" name="q' +
-                        qi +
-                        '" value="' +
-                        ci +
-                        '" required /> <span>' +
-                        escapeHtml(ch) +
-                        "</span>";
-                    wrap.appendChild(lab);
-                });
-                quizFields.appendChild(wrap);
-            });
-        }
+        renderQuizForModule(mid);
         var submitBtn = document.getElementById("learn-submit-quiz");
         if (submitBtn) {
-            submitBtn.disabled = doneToday;
+            var hasQuiz =
+                generatedQuizCache[mid] &&
+                generatedQuizCache[mid].questions &&
+                generatedQuizCache[mid].questions.length > 0;
+            submitBtn.disabled = doneToday || !hasQuiz;
             submitBtn.textContent = doneToday
                 ? "Completed today — come back tomorrow"
-                : "Submit answers";
+                : hasQuiz
+                  ? "Submit answers"
+                  : "Generate quiz first";
         }
+        if (genQuizBtn) genQuizBtn.disabled = doneToday || !aiReady;
         if (quizFeedback) {
             quizFeedback.hidden = true;
             if (doneToday) {
@@ -188,6 +182,78 @@
         }
         if (aiPanel) {
             aiPanel.hidden = !aiReady;
+        }
+    }
+
+    function renderQuizForModule(mid) {
+        if (!quizFields) return;
+        quizFields.innerHTML = "";
+        var qz = generatedQuizCache[mid];
+        if (!qz || !qz.questions || !qz.questions.length) {
+            var empty = document.createElement("p");
+            empty.className = "learn-quiz-empty";
+            empty.textContent = aiReady
+                ? "Generate a 10-question AI quiz to attempt this module reward."
+                : "AI quiz generation is unavailable until OpenAI is configured.";
+            quizFields.appendChild(empty);
+            return;
+        }
+        qz.questions.forEach(function (q, qi) {
+            var wrap = document.createElement("fieldset");
+            wrap.className = "learn-q-fieldset";
+            wrap.setAttribute("data-qi", String(qi));
+            var leg = document.createElement("legend");
+            leg.className = "learn-q-legend";
+            leg.textContent = "Q" + (qi + 1) + ". " + (q.question || "");
+            wrap.appendChild(leg);
+            (q.choices || []).forEach(function (ch, ci) {
+                var lab = document.createElement("label");
+                lab.className = "learn-choice";
+                lab.setAttribute("data-choice-index", String(ci));
+                lab.innerHTML =
+                    '<input type="radio" name="q' +
+                    qi +
+                    '" value="' +
+                    ci +
+                    '" required /> <span>' +
+                    escapeHtml(ch) +
+                    "</span>";
+                wrap.appendChild(lab);
+            });
+            quizFields.appendChild(wrap);
+        });
+    }
+
+    function applyGradeHighlight(grade) {
+        if (!quizFields || !grade) return;
+        var incorrect = grade.incorrect_indexes || [];
+        var correct = grade.correct_indexes || [];
+        var fields = quizFields.querySelectorAll(".learn-q-fieldset");
+        for (var i = 0; i < fields.length; i++) {
+            fields[i].classList.remove("is-correct", "is-incorrect");
+            var labels = fields[i].querySelectorAll(".learn-choice");
+            for (var j = 0; j < labels.length; j++) {
+                labels[j].classList.remove("is-correct", "is-incorrect");
+            }
+            var ci = correct[i];
+            if (typeof ci === "number" && ci >= 0) {
+                var good = fields[i].querySelector(
+                    '.learn-choice[data-choice-index="' + ci + '"]'
+                );
+                if (good) good.classList.add("is-correct");
+            }
+            if (incorrect.indexOf(i) !== -1) {
+                fields[i].classList.add("is-incorrect");
+                var picked = fields[i].querySelector("input:checked");
+                if (picked) {
+                    var bad = picked.closest(".learn-choice");
+                    if (bad && !bad.classList.contains("is-correct")) {
+                        bad.classList.add("is-incorrect");
+                    }
+                }
+            } else {
+                fields[i].classList.add("is-correct");
+            }
         }
     }
 
@@ -209,11 +275,11 @@
         quizForm.addEventListener("submit", function (e) {
             e.preventDefault();
             if (!activeModuleId) return;
-            var qs = moduleDetailCache[activeModuleId];
-            if (!qs || !qs.questions) return;
+            var qz = generatedQuizCache[activeModuleId];
+            if (!qz || !qz.questions || !qz.quiz_id) return;
             var ans = [];
             var bad = false;
-            for (var i = 0; i < qs.questions.length; i++) {
+            for (var i = 0; i < qz.questions.length; i++) {
                 var sel = quizForm.querySelector('input[name="q' + i + '"]:checked');
                 if (!sel) {
                     bad = true;
@@ -236,10 +302,12 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     module_id: activeModuleId,
+                    quiz_id: qz.quiz_id,
                     answers: ans,
                 }),
             }).then(function (res) {
                 if (!res.ok) {
+                    if (res.d && res.d.grade) applyGradeHighlight(res.d.grade);
                     if (quizFeedback) {
                         quizFeedback.hidden = false;
                         quizFeedback.className = "learn-quiz-feedback is-error";
@@ -252,9 +320,52 @@
                     quizFeedback.className = "learn-quiz-feedback is-success";
                     quizFeedback.textContent = res.d.message || "Nice work!";
                 }
+                if (res.d && res.d.grade) applyGradeHighlight(res.d.grade);
                 state = res.d.state;
                 renderProgress();
                 renderGrid();
+            });
+        });
+    }
+
+    if (genQuizBtn) {
+        genQuizBtn.addEventListener("click", function () {
+            if (!activeModuleId || !aiReady) return;
+            genQuizBtn.disabled = true;
+            genQuizBtn.textContent = "Generating quiz...";
+            if (quizFeedback) quizFeedback.hidden = true;
+            api("/api/learning/generate_quiz", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ module_id: activeModuleId }),
+            }).then(function (res) {
+                genQuizBtn.disabled = false;
+                genQuizBtn.textContent = "Generate AI quiz (10 questions)";
+                if (!res.ok) {
+                    if (quizFeedback) {
+                        quizFeedback.hidden = false;
+                        quizFeedback.className = "learn-quiz-feedback is-error";
+                        quizFeedback.textContent =
+                            res.d.error || "Could not generate quiz.";
+                    }
+                    return;
+                }
+                generatedQuizCache[activeModuleId] = {
+                    quiz_id: res.d.quiz_id,
+                    questions: res.d.questions || [],
+                };
+                renderQuizForModule(activeModuleId);
+                var submitBtn = document.getElementById("learn-submit-quiz");
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = "Submit answers";
+                }
+                if (quizFeedback) {
+                    quizFeedback.hidden = false;
+                    quizFeedback.className = "learn-quiz-feedback is-muted";
+                    quizFeedback.textContent = "Quiz generated. Answer all 10 questions.";
+                }
             });
         });
     }

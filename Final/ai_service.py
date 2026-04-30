@@ -33,10 +33,13 @@ _SYSTEM_OUTLOOK = (
 )
 
 _SYSTEM_CHAT = (
-    "You are SimpleTrade's in-app assistant: helpful, accurate, and cautious. "
-    "Explain concepts, UI help, and general market education. "
+    "You are SimpleTrade's in-app assistant for a paper-trading simulator. "
+    "Be helpful, practical, and educational. You may provide concrete simulated trade ideas, "
+    "position-sizing examples, and step-by-step plans for fake-money learning. "
+    "Use the app context (portfolio, quotes, headlines) when available. "
+    "Never claim certainty, never guarantee returns, and do not invent data. "
     + _EDU_DISCLAIMER
-    + " If asked for personalized investment advice, refuse and suggest speaking to a professional."
+    + " Do not give blanket refusals for normal simulator questions; instead give safe, balanced guidance for learning."
 )
 
 _SYSTEM_TICKER_OVERVIEW = (
@@ -146,6 +149,84 @@ def generate_learning_summary(module_title: str, outline: str) -> tuple[str | No
         return None, str(e)
 
 
+def generate_learning_quiz(
+    module_title: str, outline: str, question_count: int = 10
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Generate a fresh multiple-choice quiz from module lesson content."""
+    c = _client()
+    if not c:
+        return None, "OpenAI is not configured. Set OPENAI_API_KEY in your environment."
+    n = max(4, min(int(question_count), 12))
+    prompt = (
+        f"Module title: {module_title}\n"
+        f"Generate exactly {n} multiple-choice questions based only on the lesson outline below.\n\n"
+        "Output STRICT JSON with this shape only:\n"
+        '{ "questions": [ { "question": "...", "choices": ["...","...","...","..."], "correct_index": 0 } ] }\n\n'
+        "Rules:\n"
+        "- Exactly 4 choices per question.\n"
+        "- Exactly one correct choice.\n"
+        "- correct_index must be integer 0-3.\n"
+        "- Questions should be clear and non-trivial.\n"
+        "- Do not include markdown, comments, or extra keys.\n\n"
+        f"Lesson outline:\n{outline[:14000]}"
+    )
+    try:
+        r = c.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You write valid JSON only. "
+                        "No prose. No markdown. No code fences."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.8,
+            max_tokens=2400,
+            response_format={"type": "json_object"},
+        )
+        text = (r.choices[0].message.content or "").strip()
+        import json
+
+        data = json.loads(text)
+        items = data.get("questions")
+        if not isinstance(items, list):
+            return None, "AI quiz format was invalid."
+        clean: list[dict[str, Any]] = []
+        for q in items[:n]:
+            if not isinstance(q, dict):
+                continue
+            question = str(q.get("question") or "").strip()
+            choices = q.get("choices")
+            correct_index = q.get("correct_index")
+            if (
+                not question
+                or not isinstance(choices, list)
+                or len(choices) != 4
+                or not isinstance(correct_index, int)
+                or correct_index < 0
+                or correct_index > 3
+            ):
+                continue
+            choice_text = [str(c0 or "").strip() for c0 in choices]
+            if any(not c1 for c1 in choice_text):
+                continue
+            clean.append(
+                {
+                    "question": question,
+                    "choices": choice_text,
+                    "correct_index": correct_index,
+                }
+            )
+        if len(clean) != n:
+            return None, "AI quiz generation did not return enough valid questions."
+        return clean, None
+    except Exception as e:
+        return None, str(e)
+
+
 def generate_ticker_overview(context_text: str) -> tuple[str | None, str | None]:
     """Educational overview for a single symbol from Yahoo snapshot + headlines."""
     c = _client()
@@ -171,12 +252,26 @@ def generate_ticker_overview(context_text: str) -> tuple[str | None, str | None]
         return None, str(e)
 
 
-def chat_reply(messages: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+def chat_reply(
+    messages: list[dict[str, Any]], context_text: str = ""
+) -> tuple[str | None, str | None]:
     """messages: list of {role, content} for OpenAI chat."""
     c = _client()
     if not c:
         return None, "OpenAI is not configured. Set OPENAI_API_KEY in your environment."
     safe: list[dict[str, str]] = [{"role": "system", "content": _SYSTEM_CHAT}]
+    ctx = (context_text or "").strip()
+    if ctx:
+        safe.append(
+            {
+                "role": "system",
+                "content": (
+                    "Use this live app context when relevant. "
+                    "If data appears missing or stale, say so clearly and avoid guessing.\n\n"
+                    + ctx[:14000]
+                ),
+            }
+        )
     for m in messages[-24:]:
         role = m.get("role")
         content = (m.get("content") or "").strip()

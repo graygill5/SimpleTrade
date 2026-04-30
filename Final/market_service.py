@@ -7,6 +7,7 @@ Optional: SIMPLETRADE_MOVERS_MAX caps movers universe size (e.g. 30) for faster 
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -52,7 +53,7 @@ def _movers_symbols() -> list[str]:
 _CACHE: dict[str, tuple[float, Any, float]] = {}
 _MOVER_ROWS_LOCK = threading.Lock()
 # Default cache for news, single-ticker fetches
-_TTL_DEFAULT = 120.0
+_TTL_DEFAULT = 300.0
 # Index tape: parallel Yahoo calls; cache longer to avoid repeat bursts
 _TTL_INDEX = 300.0
 # marketCap from ticker.info (cached; fast_info often omits market_cap)
@@ -63,21 +64,97 @@ _TTL_MOVERS = 600.0
 _MOVERS_BATCH = 8
 _BATCH_PAUSE = 0.12
 
+# Survives process restarts (local dev / persistent server disk). Empty on fresh deploy with ephemeral FS.
+_YAHOO_DISK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".yahoo_cache")
+_DISK_CACHE_KEYS = frozenset({"indexes", "mover_rows_raw", "movers", "trending"})
+
+
+def _disk_ttl_for_key(key: str) -> float:
+    return _TTL_INDEX if key == "indexes" else _TTL_MOVERS
+
+
+def _disk_cache_path(key: str) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in key)[:96]
+    return os.path.join(_YAHOO_DISK_DIR, safe + ".json")
+
+
+def _disk_cache_read(key: str, ttl: float) -> Any | None:
+    if os.environ.get("SIMPLETRADE_DISABLE_DISK_CACHE", "").strip() == "1":
+        return None
+    if key not in _DISK_CACHE_KEYS:
+        return None
+    path = _disk_cache_path(key)
+    try:
+        if not os.path.isfile(path):
+            return None
+        if time.time() - os.path.getmtime(path) > ttl:
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _disk_cache_read_stale(key: str) -> Any | None:
+    """Best-effort stale fallback when live Yahoo calls fail."""
+    if os.environ.get("SIMPLETRADE_DISABLE_DISK_CACHE", "").strip() == "1":
+        return None
+    if key not in _DISK_CACHE_KEYS:
+        return None
+    path = _disk_cache_path(key)
+    try:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _disk_cache_write(key: str, val: Any, ttl: float) -> None:
+    if os.environ.get("SIMPLETRADE_DISABLE_DISK_CACHE", "").strip() == "1":
+        return
+    if key not in _DISK_CACHE_KEYS:
+        return
+    path = _disk_cache_path(key)
+    try:
+        os.makedirs(_YAHOO_DISK_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(val, f, default=str)
+    except Exception:
+        pass
+
 
 def _cache_get(key: str) -> Any | None:
     ent = _CACHE.get(key)
+    if ent:
+        ts, val, ttl = ent
+        if time.time() - ts <= ttl:
+            return val
+        del _CACHE[key]
+
+    # Cold in-memory cache after restart: reload last Yahoo bulk result from disk (same TTL rules).
+    if key in _DISK_CACHE_KEYS:
+        ttl = _disk_ttl_for_key(key)
+        dv = _disk_cache_read(key, ttl)
+        if dv is not None:
+            _CACHE[key] = (time.time(), dv, ttl)
+            return dv
+    return None
+
+
+def _cache_get_stale(key: str) -> Any | None:
+    ent = _CACHE.get(key)
     if not ent:
         return None
-    ts, val, ttl = ent
-    if time.time() - ts > ttl:
-        del _CACHE[key]
-        return None
-    return val
+    return ent[1]
 
 
 def _cache_set(key: str, val: Any, ttl: float | None = None) -> None:
     t = ttl if ttl is not None else _TTL_DEFAULT
     _CACHE[key] = (time.time(), val, t)
+    if key in _DISK_CACHE_KEYS:
+        _disk_cache_write(key, val, t)
 
 
 def _safe_float(x: Any) -> float | None:
@@ -194,6 +271,11 @@ def fetch_indexes() -> list[dict[str, Any]]:
                     "change_pct": None,
                 }
     out = [out_map[s] for s in INDEX_SYMBOLS]
+    if not any(r.get("price") is not None for r in out):
+        stale = _disk_cache_read_stale(ck)
+        if isinstance(stale, list) and stale:
+            _cache_set(ck, stale, ttl=_TTL_INDEX)
+            return stale
 
     _cache_set(ck, out, ttl=_TTL_INDEX)
     return out
@@ -257,22 +339,50 @@ def _mover_universe_rows() -> list[dict[str, Any]]:
         if hit is not None:
             return hit
         rows = _rows_from_history(_movers_symbols())
+        if not rows:
+            stale = _disk_cache_read_stale(ck)
+            if isinstance(stale, list) and stale:
+                _cache_set(ck, stale, ttl=_TTL_MOVERS)
+                return stale
         _cache_set(ck, rows, ttl=_TTL_MOVERS)
         return rows
+
+
+def _normalize_movers_cache_hit(
+    hit: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
+    """Disk JSON turns (gainers, losers) into a two-element list; normalize for templates."""
+    if isinstance(hit, (list, tuple)) and len(hit) == 2:
+        a, b = hit[0], hit[1]
+        if isinstance(a, list) and isinstance(b, list):
+            return (a, b)
+    return None
 
 
 def fetch_movers() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     ck = "movers"
     hit = _cache_get(ck)
     if hit is not None:
-        return hit
+        norm = _normalize_movers_cache_hit(hit)
+        if norm is not None:
+            return norm
 
     rows = _mover_universe_rows()
     valid = [r for r in rows if r.get("change_pct") is not None]
+    if not valid:
+        # Last-resort: lightweight quote sample so UI does not go blank.
+        sample = fetch_quotes_for_symbols(_movers_symbols()[:20], with_mcap=False)
+        valid = [r for r in sample if r.get("change_pct") is not None]
+    if not valid:
+        stale = _disk_cache_read_stale(ck)
+        norm = _normalize_movers_cache_hit(stale)
+        if norm is not None:
+            _cache_set(ck, norm, ttl=_TTL_MOVERS)
+            return norm
     sorted_up = sorted(valid, key=lambda x: x["change_pct"], reverse=True)[:10]
     sorted_dn = sorted(valid, key=lambda x: x["change_pct"])[:10]
     pair = (sorted_up, sorted_dn)
-    _cache_set(ck, pair)
+    _cache_set(ck, pair, ttl=_TTL_MOVERS)
     return pair
 
 
@@ -284,8 +394,16 @@ def fetch_trending_by_volume() -> list[dict[str, Any]]:
 
     rows = _mover_universe_rows()
     with_vol = [r for r in rows if r.get("volume")]
+    if not with_vol:
+        sample = fetch_quotes_for_symbols(_movers_symbols()[:20], with_mcap=False)
+        with_vol = [r for r in sample if r.get("volume")]
+    if not with_vol:
+        stale = _disk_cache_read_stale(ck)
+        if isinstance(stale, list) and stale:
+            _cache_set(ck, stale, ttl=_TTL_MOVERS)
+            return stale
     trending = sorted(with_vol, key=lambda x: x["volume"] or 0, reverse=True)[:12]
-    _cache_set(ck, trending)
+    _cache_set(ck, trending, ttl=_TTL_MOVERS)
     return trending
 
 
@@ -410,7 +528,11 @@ def fetch_market_news(limit: int = 18) -> list[dict[str, Any]]:
 
     if merged:
         _cache_set(ck, merged)
-    return merged
+        return merged
+    stale = _cache_get_stale(ck)
+    if isinstance(stale, list) and stale:
+        return stale
+    return []
 
 
 def format_market_news_for_ai(items: list[dict[str, Any]], limit: int = 14) -> str:
@@ -477,11 +599,18 @@ def _enrich_quote_from_history(sym: str, out: dict[str, Any]) -> None:
         pass
 
 
-def fetch_quote(symbol: str, *, with_mcap: bool = True) -> dict[str, Any] | None:
+def fetch_quote(
+    symbol: str, *, with_mcap: bool = True, force_refresh: bool = False
+) -> dict[str, Any] | None:
     """Quote from Yahoo. Set with_mcap=False for search/autocomplete to avoid extra ticker.info calls (rate limits)."""
     sym = symbol.strip().upper().replace(" ", "")
     if not sym:
         return None
+    ck = f"quote_{sym}_{'mcap' if with_mcap else 'nomcap'}"
+    if not force_refresh:
+        hit = _cache_get(ck)
+        if isinstance(hit, dict):
+            return hit
     try:
         t = yf.Ticker(sym)
         fi = t.fast_info
@@ -505,9 +634,17 @@ def fetch_quote(symbol: str, *, with_mcap: bool = True) -> dict[str, Any] | None
         _enrich_quote_from_history(sym, out)
         if with_mcap:
             _fill_market_cap_from_info(sym, out)
+        _cache_set(ck, out, ttl=_TTL_DEFAULT)
         return out
     except Exception:
-        return _fetch_quote_history_only(sym, with_mcap=with_mcap)
+        out = _fetch_quote_history_only(sym, with_mcap=with_mcap)
+        if out:
+            _cache_set(ck, out, ttl=_TTL_DEFAULT)
+            return out
+        stale = _cache_get_stale(ck)
+        if isinstance(stale, dict):
+            return stale
+        return None
 
 
 # Price chart ranges: UI key -> (yfinance period, interval)
@@ -559,10 +696,16 @@ def fetch_chart_series(symbol: str, range_key: str) -> dict[str, Any] | None:
     if hist is None and alt:
         hist = _pull(alt[0], alt[1])
     if hist is None:
+        stale = _cache_get_stale(ck)
+        if isinstance(stale, dict):
+            return stale
         return None
 
     s = hist["Close"].dropna()
     if s.empty:
+        stale = _cache_get_stale(ck)
+        if isinstance(stale, dict):
+            return stale
         return None
 
     labels: list[str] = []
@@ -583,7 +726,7 @@ def fetch_chart_series(symbol: str, range_key: str) -> dict[str, Any] | None:
         "labels": labels,
         "closes": closes,
     }
-    _cache_set(ck, out, ttl=45.0)
+    _cache_set(ck, out, ttl=300.0)
     return out
 
 
@@ -621,6 +764,20 @@ def fetch_quotes_for_symbols(
                     out.append(q)
             except Exception:
                 continue
+    # Keep watchlists readable during Yahoo outages: return symbol stubs when quote missing.
+    if not out:
+        return [
+            {
+                "symbol": s,
+                "name": s,
+                "price": None,
+                "change_pct": None,
+                "volume": None,
+                "market_cap": None,
+                "currency": "USD",
+            }
+            for s in uniq
+        ]
     return out
 
 

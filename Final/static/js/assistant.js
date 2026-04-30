@@ -27,7 +27,7 @@
         if (msgs.children.length === 0) {
             appendBubble(
                 "bot",
-                "Hi — I can explain markets, the app, and general concepts. What would you like to explore?"
+                "Hi. I can answer questions using your portfolio data and live market data, including ticker quotes and recent headlines. What would you like to review?"
             );
         }
         setTimeout(function () {
@@ -49,13 +49,15 @@
         if (!input) return;
         var t = input.value.trim();
         if (!t) return;
+        if (sendBtn) sendBtn.disabled = true;
+        if (input) input.disabled = true;
         input.value = "";
         appendBubble("user", t);
         history.push({ role: "user", content: t });
 
         var loading = document.createElement("div");
-        loading.className = "bubble bot";
-        loading.textContent = "…";
+        loading.className = "bubble bot loading";
+        loading.textContent = "Assistant is thinking...";
         msgs.appendChild(loading);
         scrollBottom();
 
@@ -70,6 +72,8 @@
             })
             .then(function (data) {
                 msgs.removeChild(loading);
+                if (sendBtn) sendBtn.disabled = false;
+                if (input) input.disabled = false;
                 if (data.error) {
                     appendBubble("bot", "Sorry — " + data.error);
                     return;
@@ -77,10 +81,14 @@
                 var reply = data.reply || "";
                 appendBubble("bot", reply);
                 history.push({ role: "assistant", content: reply });
+                if (input) input.focus();
             })
             .catch(function () {
                 msgs.removeChild(loading);
+                if (sendBtn) sendBtn.disabled = false;
+                if (input) input.disabled = false;
                 appendBubble("bot", "Network error. Try again.");
+                if (input) input.focus();
             });
     }
 

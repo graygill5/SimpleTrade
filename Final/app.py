@@ -28,6 +28,8 @@ app.secret_key = "secret123"
 # Session cookies: Lax works for same-site fetch + top-level navigation; set SESSION_COOKIE_SECURE=True behind HTTPS in production.
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# In local dev, avoid stale JS/CSS after rapid edits/hot reloads.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 # Allow common US tickers: digits (e.g. chips), ^ for indexes, hyphen/dot class shares
 SYMBOL_RE = re.compile(r"^[A-Z0-9\^\-\.]{1,24}$")
@@ -469,6 +471,120 @@ def _watchlist_remove(username: str, symbol: str) -> bool:
     return n > 0
 
 
+def _extract_possible_symbols(text: str) -> list[str]:
+    raw = re.findall(r"\b[A-Za-z\^\.\-]{1,10}\b", (text or ""))
+    skip = {
+        "A",
+        "AN",
+        "AND",
+        "ARE",
+        "AS",
+        "AT",
+        "BE",
+        "FOR",
+        "FROM",
+        "GET",
+        "HAS",
+        "HAVE",
+        "HOW",
+        "IN",
+        "IS",
+        "IT",
+        "ME",
+        "MY",
+        "OF",
+        "ON",
+        "OR",
+        "SHOW",
+        "TELL",
+        "THE",
+        "TO",
+        "US",
+        "WHAT",
+        "WITH",
+        "YOU",
+    }
+    out: list[str] = []
+    seen: set[str] = set()
+    for tok in raw:
+        s = tok.strip().upper()
+        if not s or s in skip:
+            continue
+        if not SYMBOL_RE.match(s):
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+        if len(out) >= 4:
+            break
+    return out
+
+
+def _build_ai_chat_context(username: str, latest_user_text: str) -> str:
+    lines: list[str] = [f"Current signed-in user: {username}"]
+
+    try:
+        st = paper_service.get_portfolio_state(username)
+        lines.append("Portfolio snapshot:")
+        lines.append(
+            f"- Total value: {st.get('total_value')} | Cash: {st.get('cash')} | "
+            f"Unrealized P/L: {st.get('unrealized_pl')} | Total P/L: {st.get('total_pl')}"
+        )
+        poss = st.get("positions") or []
+        if poss:
+            lines.append("- Top positions:")
+            for p in poss[:6]:
+                lines.append(
+                    f"  - {p.get('symbol')}: shares={p.get('shares')}, last={p.get('last')}, "
+                    f"market_value={p.get('market_value')}, unrealized_pl={p.get('unrealized_pl')}"
+                )
+        else:
+            lines.append("- No open positions.")
+    except Exception:
+        lines.append("Portfolio snapshot unavailable.")
+
+    try:
+        wl_syms = _watchlist_symbols(username)[:8]
+        if wl_syms:
+            wl_quotes = market_service.fetch_quotes_for_symbols(wl_syms, with_mcap=False)
+            if wl_quotes:
+                lines.append("Watchlist quotes:")
+                for q in wl_quotes:
+                    lines.append(
+                        f"- {q.get('symbol')}: price={q.get('price')}, change_pct={q.get('change_pct')}"
+                    )
+    except Exception:
+        lines.append("Watchlist quote snapshot unavailable.")
+
+    try:
+        requested_syms = _extract_possible_symbols(latest_user_text)
+        if requested_syms:
+            lines.append("Requested ticker quotes:")
+            for sym in requested_syms:
+                q = market_service.fetch_quote(sym, with_mcap=True)
+                if not q:
+                    lines.append(f"- {sym}: unavailable")
+                    continue
+                lines.append(
+                    f"- {q.get('symbol')}: name={q.get('name')}, price={q.get('price')}, "
+                    f"change_pct={q.get('change_pct')}, volume={q.get('volume')}, "
+                    f"market_cap={q.get('market_cap')}"
+                )
+    except Exception:
+        lines.append("Requested ticker quote lookup unavailable.")
+
+    try:
+        news = market_service.fetch_market_news(8)
+        if news:
+            lines.append("Recent market headlines:")
+            lines.append(market_service.format_market_news_for_ai(news, 8))
+    except Exception:
+        lines.append("Market headlines unavailable.")
+
+    return "\n".join(lines)
+
+
 # -------- DASHBOARD (MARKET OVERVIEW) --------
 @app.route("/dashboard")
 def dashboard():
@@ -545,7 +661,7 @@ def portfolio():
 
 @app.route("/portfolio/view/<path:owner_username>")
 def portfolio_view_friend(owner_username):
-    """Read-only portfolio for a user who granted you access (or yourself → /portfolio)."""
+    """Read-only portfolio for a friend (or yourself → /portfolio)."""
     viewer = current_user()
     if not viewer:
         return redirect("/?message=" + quote("Please sign in to view portfolios."))
@@ -557,7 +673,7 @@ def portfolio_view_friend(owner_username):
     if not paper_service.can_view_portfolio(viewer, owner):
         return redirect(
             "/portfolio?message="
-            + quote("You do not have permission to view that portfolio.")
+            + quote("You can only view portfolios of users who are your friends.")
         )
     paper_service.ensure_paper_account(owner)
     return render_template(
@@ -616,17 +732,38 @@ def api_learning_quiz_submit():
     assert me
     body = request.get_json(silent=True) or {}
     mid = (body.get("module_id") or "").strip()
+    quiz_id = (body.get("quiz_id") or "").strip()
     answers = body.get("answers")
     if not isinstance(answers, list):
         return jsonify({"error": "answers must be a list of choice indices"}), 400
-    ok, msg, payload = learning_service.submit_quiz(me, mid, answers)
+    ok, msg, payload = learning_service.submit_quiz(me, mid, answers, quiz_id=quiz_id)
     if not ok:
-        return jsonify({"error": msg}), 400
+        out = {"error": msg}
+        if payload:
+            out.update(payload)
+        return jsonify(out), 400
     pf = paper_service.get_portfolio_state(me)
     out = dict(payload)
     out["message"] = msg
     out["portfolio"] = pf
     return jsonify(out)
+
+
+@app.route("/api/learning/generate_quiz", methods=["POST"])
+@login_required_json
+def api_learning_generate_quiz():
+    me = current_user()
+    assert me
+    if not ai_service.is_configured():
+        return jsonify({"error": "OpenAI is not configured."}), 400
+    body = request.get_json(silent=True) or {}
+    mid = (body.get("module_id") or "").strip()
+    ok, msg, payload = learning_service.generate_ai_quiz_for_user(
+        me, mid, question_count=10
+    )
+    if not ok:
+        return jsonify({"error": msg}), 400
+    return jsonify(payload)
 
 
 @app.route("/api/learning/ai_summary", methods=["POST"])
@@ -837,7 +974,15 @@ def api_ai_chat():
     messages = body.get("messages")
     if not isinstance(messages, list):
         return jsonify({"error": "messages must be a list"}), 400
-    text, err = ai_service.chat_reply(messages)
+    latest_user_text = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            latest_user_text = str(m.get("content") or "")
+            break
+    me = current_user()
+    assert me
+    ctx = _build_ai_chat_context(me, latest_user_text)
+    text, err = ai_service.chat_reply(messages, context_text=ctx)
     if err:
         return jsonify({"error": err}), 502
     return jsonify({"reply": text})
@@ -1054,7 +1199,14 @@ def api_social_profile_get(username):
         return jsonify({"error": "Invalid"}), 400
     if not social_service.user_exists(target):
         return jsonify({"error": "User not found"}), 404
-    return jsonify({"profile": social_service.get_profile(target)})
+    return jsonify(
+        {
+            "profile": social_service.get_profile(target),
+            "learning": learning_service.completion_stats(target),
+            "is_friend": social_service.are_friends(me, target),
+            "can_view_portfolio": paper_service.can_view_portfolio(me, target),
+        }
+    )
 
 
 @app.route("/api/social/friends/request", methods=["POST"])

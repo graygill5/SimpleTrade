@@ -6,8 +6,8 @@
 <div class="page-head">
     <div>
         <h1>Learning modules</h1>
-        <p class="sub learn-tagline">Earn paper-trading cash each calendar day — <strong>${{ '%.0f'|format(learning_reward_usd|float) }}</strong> per module,
-            <strong>${{ '%.0f'|format(learning_bonus_usd|float) }}</strong> bonus when you finish all {{ learning_module_count }} in one day.</p>
+        <p class="sub learn-tagline">Complete modules to earn paper-trading cash each calendar day: <strong>${{ '%.0f'|format(learning_reward_usd|float) }}</strong> per module, plus
+            <strong>${{ '%.0f'|format(learning_bonus_usd|float) }}</strong> when all {{ learning_module_count }} modules are completed in one day.</p>
     </div>
     {% set active = 'learning' %}
     {% include '_app_section_nav.html' %}
@@ -51,17 +51,20 @@
             <button type="button" class="learn-modal-close" id="learn-modal-close" aria-label="Close">×</button>
         </div>
         <p id="learn-modal-tagline" class="learn-modal-tagline"></p>
+        <div id="learn-module-graphic" class="learn-module-graphic" aria-hidden="true"></div>
 
         <div id="learn-lesson-body" class="learn-lesson-body"></div>
 
         <div class="learn-ai-panel" id="learn-ai-panel" hidden>
-            <button type="button" class="btn learn-ai-btn" id="learn-ai-btn">✨ AI recap (optional)</button>
+            <button type="button" class="btn learn-ai-btn" id="learn-ai-btn">AI recap (optional)</button>
             <p class="learn-ai-hint">Uses OpenAI when configured — supplements the lesson, doesn&apos;t replace it.</p>
             <div id="learn-ai-output" class="learn-ai-output" hidden></div>
         </div>
 
         <form id="learn-quiz-form" class="learn-quiz-form">
             <div class="learn-quiz-hd">Quiz — all correct to complete</div>
+            <button type="button" class="btn learn-gen-quiz-btn" id="learn-gen-quiz-btn">Generate AI quiz (10 questions)</button>
+            <p class="learn-quiz-note">Generate a fresh 10-question quiz for this module. Questions are different each time.</p>
             <div id="learn-quiz-fields"></div>
             <button type="submit" class="btn btn-primary learn-submit-btn" id="learn-submit-quiz">Submit answers</button>
         </form>
