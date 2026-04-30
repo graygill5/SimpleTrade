@@ -69,6 +69,11 @@ _YAHOO_DISK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".yah
 _DISK_CACHE_KEYS = frozenset({"indexes", "mover_rows_raw", "movers", "trending"})
 
 
+def _retry_delay(attempt: int) -> float:
+    # Lightweight backoff for transient Yahoo failures.
+    return 0.25 * (attempt + 1)
+
+
 def _disk_ttl_for_key(key: str) -> float:
     return _TTL_INDEX if key == "indexes" else _TTL_MOVERS
 
@@ -276,6 +281,16 @@ def fetch_indexes() -> list[dict[str, Any]]:
         if isinstance(stale, list) and stale:
             _cache_set(ck, stale, ttl=_TTL_INDEX)
             return stale
+        # Keep dashboard populated even when Yahoo is unavailable.
+        out = [
+            {
+                "symbol": s,
+                "name": labels.get(s, s),
+                "price": None,
+                "change_pct": None,
+            }
+            for s in INDEX_SYMBOLS
+        ]
 
     _cache_set(ck, out, ttl=_TTL_INDEX)
     return out
@@ -312,13 +327,66 @@ def _row_from_ticker_history(sym: str) -> dict[str, Any] | None:
 
 
 def _rows_from_history(symbols: list[str]) -> list[dict[str, Any]]:
-    """Parallel history pulls in batches with a short pause between batches."""
+    """Prefer one batch Yahoo download, then fallback to per-symbol pulls."""
     if not symbols:
         return []
+    uniq = list(dict.fromkeys(symbols))
+
+    # First try one batched download to avoid dozens of Yahoo requests.
+    for attempt in range(2):
+        try:
+            df = yf.download(
+                tickers=" ".join(uniq),
+                period="10d",
+                interval="1d",
+                auto_adjust=True,
+                group_by="ticker",
+                progress=False,
+                threads=False,
+            )
+            rows: list[dict[str, Any]] = []
+            if df is not None and not df.empty:
+                for sym in uniq:
+                    try:
+                        block = df[sym] if sym in df.columns.get_level_values(0) else None
+                    except Exception:
+                        block = None
+                    if block is None or block.empty or "Close" not in block.columns:
+                        continue
+                    close = block["Close"].dropna()
+                    if close.empty:
+                        continue
+                    vol = (
+                        block["Volume"].dropna()
+                        if "Volume" in block.columns
+                        else pd.Series(dtype=float)
+                    )
+                    last = _safe_float(close.iloc[-1])
+                    prev = _safe_float(close.iloc[-2]) if len(close) >= 2 else None
+                    chg = None
+                    if last is not None and prev is not None and prev != 0:
+                        chg = (last - prev) / prev * 100.0
+                    vol_last = _safe_float(vol.iloc[-1]) if not vol.empty else None
+                    rows.append(
+                        {
+                            "symbol": sym,
+                            "name": sym,
+                            "price": last,
+                            "change_pct": chg,
+                            "volume": vol_last,
+                        }
+                    )
+            if rows:
+                return rows
+        except Exception:
+            pass
+        time.sleep(_retry_delay(attempt))
+
+    # Fallback: parallel per-symbol pulls in small batches.
     rows: list[dict[str, Any]] = []
     batch = _MOVERS_BATCH
-    for i in range(0, len(symbols), batch):
-        chunk = symbols[i : i + batch]
+    for i in range(0, len(uniq), batch):
+        chunk = uniq[i : i + batch]
         with ThreadPoolExecutor(max_workers=min(batch, len(chunk))) as ex:
             for row in ex.map(_row_from_ticker_history, chunk):
                 if row:
@@ -364,7 +432,7 @@ def fetch_movers() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     hit = _cache_get(ck)
     if hit is not None:
         norm = _normalize_movers_cache_hit(hit)
-        if norm is not None:
+        if norm is not None and (norm[0] or norm[1]):
             return norm
 
     rows = _mover_universe_rows()
@@ -379,6 +447,21 @@ def fetch_movers() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         if norm is not None:
             _cache_set(ck, norm, ttl=_TTL_MOVERS)
             return norm
+        # Last fallback: predictable placeholders so UI sections still render.
+        seeds = _movers_symbols()[:10]
+        placeholders = [
+            {
+                "symbol": s,
+                "name": s,
+                "price": None,
+                "change_pct": None,
+                "volume": None,
+            }
+            for s in seeds
+        ]
+        pair = (placeholders, placeholders)
+        _cache_set(ck, pair, ttl=120.0)
+        return pair
     sorted_up = sorted(valid, key=lambda x: x["change_pct"], reverse=True)[:10]
     sorted_dn = sorted(valid, key=lambda x: x["change_pct"])[:10]
     pair = (sorted_up, sorted_dn)
@@ -389,7 +472,7 @@ def fetch_movers() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 def fetch_trending_by_volume() -> list[dict[str, Any]]:
     ck = "trending"
     hit = _cache_get(ck)
-    if hit is not None:
+    if isinstance(hit, list) and hit:
         return hit
 
     rows = _mover_universe_rows()
@@ -402,6 +485,19 @@ def fetch_trending_by_volume() -> list[dict[str, Any]]:
         if isinstance(stale, list) and stale:
             _cache_set(ck, stale, ttl=_TTL_MOVERS)
             return stale
+        # Keep panel visible during Yahoo outages.
+        placeholders = [
+            {
+                "symbol": s,
+                "name": s,
+                "price": None,
+                "change_pct": None,
+                "volume": None,
+            }
+            for s in _movers_symbols()[:12]
+        ]
+        _cache_set(ck, placeholders, ttl=120.0)
+        return placeholders
     trending = sorted(with_vol, key=lambda x: x["volume"] or 0, reverse=True)[:12]
     _cache_set(ck, trending, ttl=_TTL_MOVERS)
     return trending
@@ -532,7 +628,17 @@ def fetch_market_news(limit: int = 18) -> list[dict[str, Any]]:
     stale = _cache_get_stale(ck)
     if isinstance(stale, list) and stale:
         return stale
-    return []
+    # Graceful fallback so dashboard/news context is never blank.
+    return [
+        {
+            "title": "Market headlines are temporarily unavailable from Yahoo Finance.",
+            "publisher": "SimpleTrade",
+            "link": "",
+            "published": int(time.time()),
+            "published_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source": "fallback",
+        }
+    ]
 
 
 def format_market_news_for_ai(items: list[dict[str, Any]], limit: int = 14) -> str:
